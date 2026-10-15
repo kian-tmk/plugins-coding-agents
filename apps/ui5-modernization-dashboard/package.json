@@ -1,0 +1,39 @@
+{
+  "name": "mcp-apps-ui5-modernization",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP App: UI5 Modernization Progress Dashboard",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "cross-env INPUT=mcp-app.html vite build && tsc -p tsconfig.server.json",
+    "watch": "cross-env INPUT=mcp-app.html vite build --watch",
+    "serve": "tsx --watch main.ts",
+    "dev": "cross-env NODE_ENV=development concurrently \"npm run watch\" \"npm run serve\"",
+    "start": "cross-env NODE_ENV=development npm run build && npm run serve",
+    "simulate": "tsx simulate.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/express": "^2.0.2",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
