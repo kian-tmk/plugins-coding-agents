@@ -96,6 +96,44 @@ Read `references/build-and-test-commands.md`. Chrome DevTools MCP must be connec
 - **`pom.xml` exists** → Maven. Use §1.3 (`mvn clean verify -P execute.qunit ...`) for gates.
 - **No `pom.xml`** → npm. Use `package.json` scripts. Fallback: `npx @ui5/linter --details`.
 
+## Dashboard Integration
+
+The UI5 Modernization Dashboard (MCP App) can display live progress when running alongside this skill. Integration is **optional and non-blocking** — if the server is not reachable the skill continues normally.
+
+### Setup (once, in Phase 0)
+
+After the prerequisite check, detect whether the dashboard is running and define the helper used throughout the skill:
+
+```bash
+curl -s http://localhost:3001/api/status > /dev/null 2>&1 && DASHBOARD=true || DASHBOARD=false
+START_TS=$(date +%s)
+
+elapsed_seconds() { echo $(( $(date +%s) - START_TS )); }
+
+push_status() {
+  [ "$DASHBOARD" = "true" ] || return 0
+  # Inject elapsedSeconds into every push automatically
+  local payload="$1"
+  local elapsed=$(elapsed_seconds)
+  payload=$(echo "$payload" | sed "s/}$/,\"elapsedSeconds\":$elapsed}/")
+  curl -s -X POST http://localhost:3001/mcp \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"update-status\",\"arguments\":$1}}" > /dev/null 2>&1 || true
+}
+```
+
+All `push_status` calls are fire-and-forget (`> /dev/null`). A failed call must never abort the run.
+
+### Call sites
+
+| When | Fields to include |
+|---|---|
+| After linter baseline (Phase 0) | `status:"running"`, `project`, `projectPath`, `ui5Version`, `linterBaseline`, `totalFindings`, `phases` (all pending — use exact schema below), `startedAt` |
+| Each phase starts | `currentPhase`, phase N `status:"running"`, `phaseStartedAt`, `currentActivity` |
+| Each phase ends (after commit) | phase N `status:"completed"`, `findingsAfter`, `filesChanged`, `commit`, `commitMessage`, `durationSeconds`, `findingsFixed`, `findingsRemaining`, `overallProgress` |
+| Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
+
 ## Operating Principles
 
 1. **Fix every error that has a mapped skill.** Volume is not a reason to defer.
@@ -131,11 +169,48 @@ grep -c " error \| warning " /tmp/ui5-linter-baseline.txt || echo "0"
 
 Parse: total errors/warnings, grouped by rule ID and file. Store for final comparison.
 
+Push initial dashboard state after parsing the baseline:
+
+```bash
+push_status "{\"status\":\"running\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"ui5Version\":\"$UI5_VERSION\",\"linterBaseline\":$BASELINE_COUNT,\"totalFindings\":$BASELINE_COUNT,\"findingsFixed\":0,\"findingsRemaining\":$BASELINE_COUNT,\"currentPhase\":0,\"overallProgress\":0,\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
+
+Where `$PHASES_JSON` is the phases array with all phases set to `"status":"pending"`, built from the linter output.
+
+**Required phase object schema** — use these exact field names (the dashboard will break on `"phase"`/`"title"`):
+
+```json
+[
+  {"id":1,"name":"Mechanical Baseline","description":"Autofix + test starter modernization","status":"pending","skills":["modernize-test-starter"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
+  {"id":2,"name":"Foundation","description":"manifest.json + Component.js","status":"pending","skills":["fix-manifest-json","fix-component-async"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
+  {"id":3,"name":"Module System & Globals","description":"JS globals, pseudo-modules, cycles, blind spots","status":"pending","skills":["fix-js-globals","fix-xml-globals","fix-pseudo-modules","fix-cyclic-deps","fix-linter-blind-spots"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
+  {"id":4,"name":"Deprecated APIs","description":"Replace deprecated APIs and themes","status":"pending","skills":["fix-bootstrap-params","fix-library-init","fix-control-renderer","fix-deprecated-controls","fix-partially-deprecated-apis","fix-table-row-mode","fix-xml-native-html","fix-fiori-elements-extensions"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
+  {"id":5,"name":"CSP Compliance","description":"Externalize inline scripts","status":"pending","skills":["fix-csp-compliance"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
+  {"id":6,"name":"Documentation","description":"Write modernization report and issues file","status":"pending","skills":[],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null}
+]
+```
+
+When updating a phase (start/end), carry all fields forward — only change `status`, and fill in `findingsBefore`/`findingsAfter`/`filesChanged`/`commit`/`commitMessage`/`durationSeconds` as they become known.
+
 ### Step 1.2: Apply Autofix
+
+Push phase start before applying autofix:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1: Mechanical Baseline\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
 
 ```bash
 npx @ui5/linter --fix
 npx @ui5/linter --details 2>&1 | tee /tmp/ui5-linter-post-autofix.txt
+```
+
+Parse the post-autofix count and push it to the dashboard immediately:
+
+```bash
+POST_AUTOFIX_COUNT=$(grep -c " error \| warning " /tmp/ui5-linter-post-autofix.txt || echo "0")
+FIXED_AUTOFIX=$((BASELINE_COUNT - POST_AUTOFIX_COUNT))
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Autofix complete — ${FIXED_AUTOFIX} findings resolved\",\"findingsFixed\":$FIXED_AUTOFIX,\"findingsRemaining\":$POST_AUTOFIX_COUNT,\"overallProgress\":$(( FIXED_AUTOFIX * 100 / BASELINE_COUNT )),\"phases\":$PHASES_JSON}"
 ```
 
 ### Step 1.3: Test Starter modernization
@@ -144,9 +219,23 @@ Launch sub-agent with `modernize-test-starter`. Use custom prompt instructing it
 
 ### Phase 1 commit + gate
 
+Push phase completion after commit:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1 complete\",\"findingsFixed\":$FIXED_1,\"findingsRemaining\":$REMAINING_1,\"overallProgress\":$PROGRESS_1,\"phases\":$PHASES_JSON}"
+```
+
 ## Phase 2: Foundation
 
 ### Step 2.1: manifest.json
+
+Push phase start before launching sub-agents:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Phase 2: Foundation\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
+
+**Important:** Always include `\"currentPhase\":2` in every Phase 2 `push_status` call — not just `currentActivity`. The dashboard uses `currentPhase` to highlight the active stepper step.
 
 Launch sub-agent with `fix-manifest-json`. Pass all `manifest.json` errors from rules: `no-outdated-manifest-version`, `no-legacy-ui5-version-in-manifest`, `no-deprecated-library`, `no-deprecated-component`, `no-removed-manifest-property`, plus `no-deprecated-api` with "view type"/"model type"/"resources/js".
 
@@ -164,11 +253,23 @@ If exit code 1, fix: `imported-interface` → remove from deps, use string liter
 
 ### Phase 2 commit + gate
 
+Push phase completion after commit:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Phase 2 complete\",\"findingsFixed\":$FIXED_2,\"findingsRemaining\":$REMAINING_2,\"overallProgress\":$PROGRESS_2,\"phases\":$PHASES_JSON}"
+```
+
 ## Phase 3: Module System & Globals
 
 **Strategy:** Three global/module skills run **in parallel** (different files). `fix-linter-blind-spots` and `fix-cyclic-deps` run **sequentially after** (need stable complete JS layer).
 
 **Critical:** Always use sub-agents for Step 3.1. The `fix-js-globals` Key Rules are not in main-agent context.
+
+Push phase start before launching sub-agents:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Phase 3: Module System & Globals\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
 
 ### Step 3.1: Parallel batch
 
@@ -195,9 +296,21 @@ Launch one sub-agent. Instruct it to: read the skill, build dependency graph, au
 
 Re-run linter to verify no regression before committing.
 
+Push phase completion after commit:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Phase 3 complete\",\"findingsFixed\":$FIXED_3,\"findingsRemaining\":$REMAINING_3,\"overallProgress\":$PROGRESS_3,\"phases\":$PHASES_JSON}"
+```
+
 ## Phase 4: Deprecated APIs
 
 **Strategy:** Skills target different rules/files → run **in parallel** by skill. Group errors by skill using the mapping tables, launch one sub-agent per file (or cluster).
+
+Push phase start before launching sub-agents:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Phase 4: Deprecated APIs\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
 
 ### Execution
 
@@ -209,17 +322,35 @@ Re-run linter. Second batch for new Phase 4 errors only.
 
 ### Phase 4 commit + gate
 
+Push phase completion after commit:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Phase 4 complete\",\"findingsFixed\":$FIXED_4,\"findingsRemaining\":$REMAINING_4,\"overallProgress\":$PROGRESS_4,\"phases\":$PHASES_JSON}"
+```
+
 ## Phase 5: CSP Compliance
 
 CSP comes last because earlier phases may introduce inline blocks.
 
 **Critical: never delete inline scripts — always externalize.** Move inline code to `.js` file, replace with `<script src="...">`.
 
+Push phase start before launching sub-agents:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Phase 5: CSP Compliance\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
+
 Launch sub-agents for files with `csp-unsafe-inline-script`. Use template with `fix-csp-compliance`.
 
 ### Phase 5 commit + gate
 
 Final linter run for error count.
+
+Push phase completion after commit:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Phase 5 complete\",\"findingsFixed\":$FIXED_5,\"findingsRemaining\":$REMAINING_5,\"overallProgress\":$PROGRESS_5,\"phases\":$PHASES_JSON}"
+```
 
 ## Verification Gate
 
@@ -293,12 +424,25 @@ Instructions:
 | 3 (sequential) | `fix-linter-blind-spots`, `fix-cyclic-deps` |
 | 4 | `fix-bootstrap-params`, `fix-library-init`, `fix-control-renderer`, `fix-deprecated-controls`, `fix-fiori-elements-extensions`, `fix-partially-deprecated-apis`, `fix-table-row-mode`, `fix-xml-native-html` |
 | 5 | `fix-csp-compliance` |
+| 6 | *(no sub-agents — write docs directly)* |
 
 ## Documentation Phase (after Phase 5)
+
+Push phase 6 start:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":6,\"currentActivity\":\"Phase 6: Documentation\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+```
 
 Create `MODERNIZATION-ISSUES.md` and `MODERNIZATION-REPORT.md` using templates in `references/documentation-templates.md`.
 
 Commit: `docs: add modernization report and issues`
+
+Push run completion after the docs commit:
+
+```bash
+push_status "{\"status\":\"completed\",\"currentActivity\":\"Modernization complete\",\"overallProgress\":100,\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"findingsFixed\":$FIXED_TOTAL,\"findingsRemaining\":0,\"phases\":$PHASES_JSON,\"deferredIssues\":$DEFERRED_JSON}"
+```
 
 ## Context Management
 
