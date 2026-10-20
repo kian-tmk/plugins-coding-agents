@@ -5,17 +5,20 @@ import {
   applyHostStyleVariables,
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps";
+import { marked } from "marked";
 import "./mcp-app.css";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type PhaseStatus = "pending" | "running" | "completed" | "failed";
+type PhaseStatus = "pending" | "running" | "testing" | "completed" | "failed";
+type GateStatus = "idle" | "running" | "passed" | "failed";
 
 interface PhaseState {
   id: number;
   name: string;
   description: string;
   status: PhaseStatus;
+  gateStatus: GateStatus;
   findingsBefore: number | null;
   findingsAfter: number | null;
   filesChanged: number | null;
@@ -30,6 +33,18 @@ interface DeferredIssue {
   rule: string;
   message: string;
   reason: string;
+}
+
+interface GitCommit {
+  hash: string;
+  message: string;
+  ts: string;
+}
+
+interface GitActivity {
+  commits: GitCommit[];
+  modifiedFiles: string[];
+  lastPolledAt: string;
 }
 
 interface ModernizationState {
@@ -58,6 +73,8 @@ interface ModernizationState {
   startedAt: string | null;
   completedAt: string | null;
   phaseStartedAt: string | null;
+  gitActivity: GitActivity | null;
+  lastGitActivityAt: string | null;
 }
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -65,9 +82,20 @@ interface ModernizationState {
 const screenIdle = document.getElementById("screen-idle")!;
 const screenDashboard = document.getElementById("screen-dashboard")!;
 const screenCompleted = document.getElementById("screen-completed")!;
-const btnRestart = document.getElementById("btn-restart")!;
-const btnResetHeader = document.getElementById("btn-reset-header")!;
+const btnFullscreen = document.getElementById("btn-fullscreen") as HTMLButtonElement | null;
+const btnFullscreenCompleted = document.getElementById("btn-fullscreen-completed") as HTMLButtonElement | null;
 const stepperEl = document.getElementById("stepper")!;
+const mdOverlay = document.getElementById("md-overlay")!;
+const mdTitle = document.getElementById("md-title")!;
+const mdBody = document.getElementById("md-body")!;
+const mdClose = document.getElementById("md-close")!;
+
+mdClose.addEventListener("click", () => mdOverlay.classList.add("hidden"));
+mdOverlay.addEventListener("click", (e) => { if (e.target === mdOverlay) mdOverlay.classList.add("hidden"); });
+
+// Preferred inline width for the dashboard. Reported to the host on connect so
+// the panel renders a bit wider than the default.
+const PREFERRED_WIDTH = 720;
 
 // ── MCP App ──────────────────────────────────────────────────────────────────
 
@@ -77,6 +105,34 @@ function handleHostContext(ctx: McpUiHostContext) {
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
   if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
+  if (ctx.displayMode) syncDisplayModeButton(ctx.displayMode);
+}
+
+// Ask the host for a wider inline frame. Height is left to the host / content.
+function requestPreferredWidth() {
+  app.sendSizeChanged({ width: PREFERRED_WIDTH }).catch(() => {});
+}
+
+// ── Fullscreen toggle ──────────────────────────────────────────────────────────
+
+let currentDisplayMode: "inline" | "fullscreen" | "pip" = "inline";
+
+function syncDisplayModeButton(mode: "inline" | "fullscreen" | "pip") {
+  currentDisplayMode = mode;
+  const label = mode === "fullscreen" ? "⤢ Inline" : "⤢ Fullscreen";
+  if (btnFullscreen) btnFullscreen.textContent = label;
+  if (btnFullscreenCompleted) btnFullscreenCompleted.textContent = label;
+  document.body.classList.toggle("fullscreen", mode === "fullscreen");
+}
+
+async function toggleFullscreen() {
+  const next = currentDisplayMode === "fullscreen" ? "inline" : "fullscreen";
+  try {
+    const result = await app.requestDisplayMode({ mode: next });
+    syncDisplayModeButton(result.mode);
+  } catch (err) {
+    console.error("display mode change failed:", err);
+  }
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -114,10 +170,10 @@ function buildStepper(phases: PhaseState[]) {
 
   function durationColor(d: number): string {
     if (range === 0) return "var(--green)";
-    const ratio = (d - minDur) / range; // 0 = fastest, 1 = slowest
+    const ratio = (d - minDur) / range;
     if (ratio < 0.33) return "var(--green)";
     if (ratio < 0.67) return "var(--amber)";
-    return "#e07b54"; // muted orange-red, not alarm-red
+    return "#e07b54";
   }
 
   phases.forEach((phase, i) => {
@@ -126,7 +182,9 @@ function buildStepper(phases: PhaseState[]) {
 
     const circle = document.createElement("div");
     circle.className = "step-circle";
-    circle.textContent = phase.status === "completed" ? "✓" : String(phase.id);
+    if (phase.status === "completed") circle.textContent = "✓";
+    else if (phase.status === "failed") circle.textContent = "✗";
+    else circle.textContent = String(phase.id);
 
     const label = document.createElement("div");
     label.className = "step-label";
@@ -135,34 +193,74 @@ function buildStepper(phases: PhaseState[]) {
     step.appendChild(circle);
     step.appendChild(label);
 
-    if (phase.status === "completed" && phase.durationSeconds != null) {
+    if ((phase.status === "completed" || phase.status === "failed") && phase.durationSeconds != null) {
       const dur = document.createElement("div");
       dur.className = "step-duration";
       dur.textContent = formatElapsed(phase.durationSeconds);
-      dur.style.color = durationColor(phase.durationSeconds);
+      dur.style.color = phase.status === "failed" ? "var(--red)" : durationColor(phase.durationSeconds);
       step.appendChild(dur);
     }
 
     stepperEl.appendChild(step);
 
     if (i < phases.length - 1) {
-      const conn = document.createElement("div");
-      const prevDone = phase.status === "completed";
-      const nextActive = phases[i + 1]?.status === "running";
-      conn.className = `step-connector${prevDone ? " completed" : ""}${nextActive ? " active" : ""}`;
-      stepperEl.appendChild(conn);
+      // Gate circle: show after a phase if it has a non-idle gate
+      const gate = phase.gateStatus;
+      if (gate !== "idle") {
+        // Short connector before gate
+        const connBefore = document.createElement("div");
+        const phaseDone = phase.status === "completed";
+        const phaseFailed = phase.status === "failed";
+        connBefore.className = `step-connector step-connector-short${phaseDone ? " completed" : ""}${phaseFailed ? " failed" : ""}`;
+        stepperEl.appendChild(connBefore);
+
+        // Gate node
+        const gateStep = document.createElement("div");
+        gateStep.className = `step step-gate gate-${gate}`;
+        const gateCircle = document.createElement("div");
+        gateCircle.className = "step-circle step-gate-circle";
+        gateCircle.textContent = gate === "passed" ? "✓" : gate === "failed" ? "✗" : "⚙";
+        const gateLabel = document.createElement("div");
+        gateLabel.className = "step-label";
+        gateLabel.textContent = "Gate";
+        gateStep.appendChild(gateCircle);
+        gateStep.appendChild(gateLabel);
+        stepperEl.appendChild(gateStep);
+
+        // Short connector after gate
+        const connAfter = document.createElement("div");
+        const gatePassed = gate === "passed";
+        const gateFailed = gate === "failed";
+        const nextActive = phases[i + 1]?.status === "running";
+        connAfter.className = `step-connector step-connector-short${gatePassed ? " completed" : ""}${gateFailed ? " failed" : ""}${nextActive ? " active" : ""}`;
+        stepperEl.appendChild(connAfter);
+      } else {
+        // Normal connector (no gate shown yet)
+        const conn = document.createElement("div");
+        const prevDone = phase.status === "completed";
+        const prevFailed = phase.status === "failed";
+        const nextActive = phases[i + 1]?.status === "running";
+        conn.className = `step-connector${prevDone ? " completed" : ""}${prevFailed ? " failed" : ""}${nextActive ? " active" : ""}`;
+        stepperEl.appendChild(conn);
+      }
     }
   });
 }
 
-function buildPhaseCommits(phases: PhaseState[]) {
+function buildPhaseCommits(phases: PhaseState[], gitActivity: GitActivity | null) {
   const container = document.getElementById("phase-commits")!;
-  const completed = phases.filter((p) => p.status === "completed" && p.commit);
-  if (completed.length === 0) {
+  const completed = phases.filter((p) => (p.status === "completed" || p.status === "testing" || p.status === "failed") && p.commit);
+
+  // Git-activity commits not yet in phases (in-progress work)
+  const knownHashes = new Set(phases.map(p => p.commit).filter(Boolean));
+  const liveCommits = (gitActivity?.commits ?? []).filter(c => !knownHashes.has(c.hash));
+
+  if (completed.length === 0 && liveCommits.length === 0) {
     container.innerHTML = "";
     return;
   }
-  container.innerHTML = completed.map((p) => {
+
+  const phaseRows = completed.map((p) => {
     const fixed = p.findingsBefore != null && p.findingsAfter != null
       ? `${p.findingsBefore - p.findingsAfter} fixed`
       : "";
@@ -174,8 +272,17 @@ function buildPhaseCommits(phases: PhaseState[]) {
       <span class="commit-fixed">${fixed}</span>
       <span class="commit-dur">${dur}</span>
     </div>`;
-  }).join("");
-  // Auto-scroll to latest entry
+  });
+
+  const liveRows = liveCommits.map((c) => `<div class="commit-row commit-row-live">
+      <span class="commit-phase" style="color:var(--blue-light)">live</span>
+      <span class="commit-hash">${escapeHtml(c.hash)}</span>
+      <span class="commit-msg">${escapeHtml(c.message)}</span>
+      <span class="commit-fixed"></span>
+      <span class="commit-dur"></span>
+    </div>`);
+
+  container.innerHTML = [...phaseRows, ...liveRows].join("");
   container.scrollTop = container.scrollHeight;
 }
 
@@ -183,6 +290,32 @@ function escapeHtml(s: string): string {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+function renderGitActivity(gitActivity: GitActivity | null, phases: PhaseState[]) {
+  const container = document.getElementById("git-activity")!;
+  if (!container) return;
+
+  const modFiles = gitActivity?.modifiedFiles ?? [];
+  // Filter out files that are already part of committed phases
+  const committedPhases = phases.filter(p => p.status === "completed" || p.status === "failed");
+
+  if (modFiles.length === 0) {
+    container.innerHTML = "";
+    container.style.display = "none";
+    return;
+  }
+
+  container.style.display = "";
+  const MAX_FILES = 5;
+  const shown = modFiles.slice(0, MAX_FILES);
+  const extra = modFiles.length - MAX_FILES;
+  const fileList = shown.map(f => {
+    const short = f.split("/").slice(-2).join("/");
+    return `<span class="git-file">${escapeHtml(short)}</span>`;
+  }).join(" ");
+  const moreText = extra > 0 ? ` <span class="git-file-more">+${extra} more</span>` : "";
+  container.innerHTML = `<span class="git-activity-icon">✏</span> ${fileList}${moreText}`;
 }
 
 function renderDashboard(state: ModernizationState) {
@@ -216,34 +349,41 @@ function renderDashboard(state: ModernizationState) {
   bar.style.width = `${pct}%`;
   setText("progress-pct", `${pct}%`);
 
-  const dot = document.getElementById("status-dot") as HTMLElement;
   const isRunning = state.status === "running";
-  dot.className = `status-dot ${isRunning ? "running" : activePhase?.status ?? "pending"}`;
-  setText("status-text", isRunning ? "Running" : activePhase?.status ?? "—");
+  const dot = document.getElementById("status-dot") as HTMLElement;
+  const isGateRunning = state.phases?.some(p => p.gateStatus === "running");
+  const isFailed = state.phases?.some(p => p.status === "failed" || p.gateStatus === "failed");
+  const lastActive = state.lastGitActivityAt ? new Date(state.lastGitActivityAt).getTime() : null;
+  const silentMs = lastActive !== null ? Date.now() - lastActive : null;
+  const isWaiting = isRunning && silentMs !== null && silentMs > 90_000;
+  const silentMin = silentMs !== null ? Math.round(silentMs / 60_000) : 0;
+  const waitingText = silentMin >= 2 ? `Waiting... · vor ${silentMin}m` : "Waiting...";
+  const dotState = isFailed ? "failed" : isWaiting ? "pending" : isRunning ? (isGateRunning ? "testing" : "running") : (activePhase?.status ?? "pending");
+  dot.className = `status-dot ${dotState}`;
+  setText("status-text", isFailed ? "Failed" : isWaiting ? waitingText : isGateRunning ? "Gate running" : isRunning ? "Running" : activePhase?.status ?? "—");
 
-  // Stats — derive elapsedSeconds from startedAt if not present in state
-  const elapsed = (state.elapsedSeconds != null && !isNaN(state.elapsedSeconds))
-    ? state.elapsedSeconds
-    : state.startedAt
-      ? Math.round((Date.now() - new Date(state.startedAt).getTime()) / 1000)
-      : 0;
-  syncLiveTimer(elapsed, state.phaseStartedAt ?? null);
+  syncLiveTimer(0, state.phaseStartedAt ?? null);
   setText("stat-fixed", String(state.findingsFixed ?? 0));
   setText("stat-total", String(state.totalFindings ?? state.linterBaseline ?? 0));
-  setText("stat-elapsed", formatElapsed(elapsed));
   setText("stat-progress", `${pct}%`);
   const commits = state.phases.filter((p) => p.commit).length;
   setText("stat-commits", String(commits));
 
-  // Activity
+  // Activity + live git file changes
   setText("activity-text", state.currentActivity || "—");
+  renderGitActivity(state.gitActivity ?? null, state.phases);
 
   // Phase commit list
-  buildPhaseCommits(state.phases);
+  buildPhaseCommits(state.phases, state.gitActivity ?? null);
 }
 
 function renderCompleted(state: ModernizationState) {
-  const elapsed = formatElapsed(state.elapsedSeconds);
+  const elapsedSec = (state.elapsedSeconds && state.elapsedSeconds > 0)
+    ? state.elapsedSeconds
+    : (state.startedAt && state.completedAt)
+      ? Math.round((new Date(state.completedAt).getTime() - new Date(state.startedAt).getTime()) / 1000)
+      : (state.startedAt ? Math.round((Date.now() - new Date(state.startedAt).getTime()) / 1000) : 0);
+  const elapsed = formatElapsed(elapsedSec);
   const commits = state.phases.filter((p) => p.commit).length;
   const totalFiles = state.phases.reduce((s, p) => s + (p.filesChanged ?? 0), 0);
 
@@ -300,33 +440,50 @@ function renderCompleted(state: ModernizationState) {
 
   // Links to report and issues files
   const linksEl = document.getElementById("completed-links")!;
-  const reportFile = state.reportPath.split("/").pop();
-  const issuesFile = state.issuesPath.split("/").pop();
-  linksEl.innerHTML = `
-    <a class="completed-link" href="http://localhost:3001/files/${escapeHtml(reportFile ?? "")}" target="_blank" rel="noopener">
-      <span class="completed-link-icon">📄</span>
-      <div>
-        <div class="completed-link-label">MODERNIZATION-REPORT.md</div>
-        <div class="completed-link-sub">Full phase breakdown &amp; statistics</div>
-      </div>
-    </a>
-    <a class="completed-link" href="http://localhost:3001/files/${escapeHtml(issuesFile ?? "")}" target="_blank" rel="noopener">
-      <span class="completed-link-icon">⚠</span>
-      <div>
-        <div class="completed-link-label">MODERNIZATION-ISSUES.md</div>
-        <div class="completed-link-sub">${issues.length} deferred finding${issues.length !== 1 ? "s" : ""} for manual review</div>
-      </div>
-    </a>`;
+
+  function linkCard(filePath: string, title: string, icon: string, sub: string) {
+    const reportFile = filePath.split("/").pop() ?? "";
+    const downloadAttr = standaloneMode
+      ? `<a class="completed-link-download" href="http://localhost:3001/files/${encodeURIComponent(reportFile)}" download="${escapeHtml(reportFile)}" title="Download">⬇</a>`
+      : "";
+    return `
+    <div class="completed-link-wrap">
+      <button class="completed-link" data-path="${escapeHtml(filePath)}" data-title="${escapeHtml(title)}">
+        <span class="completed-link-icon">${icon}</span>
+        <div>
+          <div class="completed-link-label">${escapeHtml(title)}</div>
+          <div class="completed-link-sub">${sub}</div>
+        </div>
+      </button>${downloadAttr}
+    </div>`;
+  }
+
+  linksEl.innerHTML =
+    linkCard(state.reportPath, "MODERNIZATION-REPORT.md", "📄", "Full phase breakdown &amp; statistics") +
+    linkCard(state.issuesPath, "MODERNIZATION-ISSUES.md", "⚠", `${issues.length} deferred finding${issues.length !== 1 ? "s" : ""} for manual review`);
+
+  linksEl.querySelectorAll<HTMLButtonElement>(".completed-link[data-path]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = btn.dataset.path ?? "";
+      const t = btn.dataset.title ?? "File";
+      openMarkdown(p, t);
+    });
+  });
 }
 
 // ── State handling ────────────────────────────────────────────────────────────
 
 function normalizePhase(p: Record<string, unknown>, index: number): PhaseState {
+  // Back-compat: if old skill set status="testing", treat it as gateStatus="running"
+  const rawStatus = (p.status ?? "pending") as PhaseStatus;
+  const effectiveStatus: PhaseStatus = rawStatus === "testing" ? "completed" : rawStatus;
+  const defaultGate: GateStatus = rawStatus === "testing" ? "running" : "idle";
   return {
     id: (p.id ?? p.phase ?? index + 1) as number,
     name: (p.name ?? p.title ?? `Phase ${index + 1}`) as string,
     description: (p.description ?? "") as string,
-    status: (p.status ?? "pending") as PhaseStatus,
+    status: effectiveStatus,
+    gateStatus: (p.gateStatus ?? defaultGate) as GateStatus,
     findingsBefore: (p.findingsBefore ?? null) as number | null,
     findingsAfter: (p.findingsAfter ?? null) as number | null,
     filesChanged: (p.filesChanged ?? null) as number | null,
@@ -349,18 +506,23 @@ function applyState(raw: unknown) {
     );
   }
 
-  if (state.status === "idle" || !state.status) {
+  // Treat stale "running" state (startedAt > 24h ago) as idle to avoid phantom timers
+  const isStale = state.status === "running" && state.startedAt
+    && (Date.now() - new Date(state.startedAt).getTime()) > 24 * 60 * 60 * 1000;
+
+  if (state.status === "idle" || !state.status || isStale) {
     stopLiveTimer();
     showScreen("idle");
   } else if (state.status === "running") {
     showScreen("dashboard");
     renderDashboard(state);
-    const derivedElapsed = (state.elapsedSeconds != null && !isNaN(state.elapsedSeconds))
-      ? state.elapsedSeconds
-      : state.startedAt
-        ? Math.round((Date.now() - new Date(state.startedAt).getTime()) / 1000)
-        : 0;
-    startLiveTimer(derivedElapsed, state.phaseStartedAt ?? null);
+    const lastActive = state.lastGitActivityAt ? new Date(state.lastGitActivityAt).getTime() : null;
+    const isInactive = lastActive !== null && (Date.now() - lastActive) > 90_000;
+    if (isInactive) {
+      pauseLiveTimer();
+    } else if (state.startedAt) {
+      startLiveTimer(state.startedAt, state.phaseStartedAt ?? null);
+    }
   } else if (state.status === "completed") {
     stopLiveTimer();
     // Show dashboard briefly, then switch to completed
@@ -381,35 +543,51 @@ function applyState(raw: unknown) {
 }
 
 // ── Live timer ────────────────────────────────────────────────────────────────
+// Elapsed counts up from startedAt, pauses on inactivity, never goes back.
+// The server value (elapsedSeconds) is ignored once the timer is running —
+// startedAt is the single source of truth.
 
 let timerInterval: ReturnType<typeof setInterval> | null = null;
-let timerBaseSeconds = 0;
-let timerBaseTs = 0;
-let phaseTimerBase = 0; // ms since epoch when current phase started (0 = unknown)
+let timerStartedAt = 0;       // absolute ms timestamp when run began
+let timerPausedAt: number | null = null;  // elapsed ms at pause point
+let phaseTimerBase = 0;
 
-function startLiveTimer(serverElapsed: number, phaseStartedAt: string | null) {
-  timerBaseSeconds = serverElapsed;
-  timerBaseTs = Date.now();
-  phaseTimerBase = phaseStartedAt ? new Date(phaseStartedAt).getTime() : 0;
+function tickTimer() {
+  const elapsed = timerPausedAt !== null
+    ? timerPausedAt
+    : Date.now() - timerStartedAt;
+  setText("stat-elapsed", formatElapsed(Math.round(elapsed / 1000)));
+  if (phaseTimerBase) {
+    setText("phase-elapsed", formatElapsed(Math.round((Date.now() - phaseTimerBase) / 1000)));
+  }
+}
+
+function startLiveTimer(startedAt: string, phaseStartedAt: string | null) {
+  if (phaseStartedAt) phaseTimerBase = new Date(phaseStartedAt).getTime();
+  // Only anchor startedAt on first start — never overwrite once running
+  if (!timerStartedAt) timerStartedAt = new Date(startedAt).getTime();
+  timerPausedAt = null;
   if (timerInterval) return;
-  timerInterval = setInterval(() => {
-    const elapsed = timerBaseSeconds + Math.round((Date.now() - timerBaseTs) / 1000);
-    setText("stat-elapsed", formatElapsed(elapsed));
-    if (phaseTimerBase) {
-      const phaseSec = Math.round((Date.now() - phaseTimerBase) / 1000);
-      setText("phase-elapsed", formatElapsed(phaseSec));
-    }
-  }, 1000);
+  tickTimer();
+  timerInterval = setInterval(tickTimer, 1000);
+}
+
+function pauseLiveTimer() {
+  if (timerPausedAt !== null) return; // already paused
+  timerPausedAt = timerStartedAt ? Date.now() - timerStartedAt : 0;
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  tickTimer(); // update display once at pause value
 }
 
 function stopLiveTimer() {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  timerStartedAt = 0;
+  timerPausedAt = null;
+  phaseTimerBase = 0;
   setText("phase-elapsed", "");
 }
 
-function syncLiveTimer(serverElapsed: number, phaseStartedAt: string | null) {
-  timerBaseSeconds = serverElapsed;
-  timerBaseTs = Date.now();
+function syncLiveTimer(_serverElapsed: number, phaseStartedAt: string | null) {
   if (phaseStartedAt) phaseTimerBase = new Date(phaseStartedAt).getTime();
 }
 
@@ -419,6 +597,32 @@ function syncLiveTimer(serverElapsed: number, phaseStartedAt: string | null) {
 // REST API at /api/status instead of using the MCP tool calls.
 
 let standaloneMode = false;
+
+// ── Markdown viewer ───────────────────────────────────────────────────────────
+
+async function openMarkdown(filePath: string, title: string) {
+  mdTitle.textContent = title;
+  mdBody.innerHTML = `<div class="md-loading">Loading…</div>`;
+  mdOverlay.classList.remove("hidden");
+
+  try {
+    if (standaloneMode) {
+      const filename = filePath.split("/").pop() ?? "";
+      const res = await fetch(`http://localhost:3001/files/${encodeURIComponent(filename)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      mdBody.innerHTML = await marked.parse(text) as string;
+      return;
+    }
+    // Claude Desktop: call get-file tool via MCP
+    const result = await app.callServerTool({ name: "get-file", arguments: { path: filePath } }) as any;
+    const content: string = result?.structuredContent?.content ?? "";
+    if (!content) throw new Error("Empty response");
+    mdBody.innerHTML = await marked.parse(content) as string;
+  } catch (err) {
+    mdBody.innerHTML = `<div class="md-error">Could not load file.<br><small>${String(err)}</small></div>`;
+  }
+}
 
 async function fetchRestStatus(): Promise<ModernizationState | null> {
   try {
@@ -458,24 +662,8 @@ function startPolling() {
 
 // ── Button handlers ───────────────────────────────────────────────────────────
 
-async function resetDashboard() {
-  polling = false;
-  stopLiveTimer();
-  lastStatus = null;
-  try {
-    if (standaloneMode) {
-      await fetch("/api/reset", { method: "POST" });
-    } else {
-      await app.callServerTool({ name: "reset-status", arguments: {} });
-    }
-  } catch (err) {
-    console.error("reset failed:", err);
-  }
-  showScreen("idle");
-}
-
-btnRestart.addEventListener("click", resetDashboard);
-btnResetHeader.addEventListener("click", resetDashboard);
+btnFullscreen?.addEventListener("click", toggleFullscreen);
+btnFullscreenCompleted?.addEventListener("click", toggleFullscreen);
 
 // ── Connect ───────────────────────────────────────────────────────────────────
 
@@ -487,12 +675,33 @@ app.ontoolresult = (result) => {
   applyState(result.structuredContent);
 };
 
+// ── Eager REST pre-fetch ──────────────────────────────────────────────────────
+// Show the correct screen immediately on load without waiting for app.connect()
+// to resolve. If the server already has a running/completed state, don't make
+// the user stare at idle while the MCP handshake is still in flight.
+fetchRestStatus().then((state) => {
+  if (document.body.className) return; // connect() already resolved, don't interfere
+  if (state?.status === "running") {
+    showScreen("dashboard");
+    renderDashboard(state);
+  } else if (state?.status === "completed") {
+    showScreen("completed");
+    renderCompleted(state);
+  }
+});
+
 // Try MCP app connection first; fall back to standalone REST polling
 app.connect().then(async () => {
+  document.body.classList.add("desktop");
+  // Propagate iframe height to html/body so height:100% works in CSS
+  document.documentElement.style.height = "100%";
+  document.body.style.height = "100%";
   const ctx = app.getHostContext();
   if (ctx) handleHostContext(ctx);
+  requestPreferredWidth();
 
   // Check if a run is already active on load
+  let desktopInitDone = false;
   try {
     const result = await app.callServerTool({ name: "get-status", arguments: {} });
     const state = result.structuredContent as ModernizationState | undefined;
@@ -500,19 +709,39 @@ app.connect().then(async () => {
       showScreen("dashboard");
       renderDashboard(state);
       startPolling();
+      desktopInitDone = true;
     } else if (state?.status === "completed") {
       showScreen("completed");
       renderCompleted(state);
-    } else {
-      showScreen("idle");
+      desktopInitDone = true;
     }
   } catch {
-    showScreen("idle");
+    // get-status via MCP failed — fall back to REST
+  }
+
+  if (!desktopInitDone) {
+    // MCP get-status unavailable or returned idle — try REST as fallback
+    const restState = await fetchRestStatus();
+    if (restState?.status === "running") {
+      showScreen("dashboard");
+      renderDashboard(restState);
+      startPolling();
+    } else if (restState?.status === "completed") {
+      showScreen("completed");
+      renderCompleted(restState);
+    } else {
+      showScreen("idle");
+      startPolling();
+    }
   }
 }).catch(async () => {
   // MCP app connection failed — running in standalone browser mode
   console.log("MCP app connection unavailable — using standalone REST polling");
   standaloneMode = true;
+
+  // Hide fullscreen buttons — not meaningful in a plain browser tab
+  if (btnFullscreen) btnFullscreen.style.display = "none";
+  if (btnFullscreenCompleted) btnFullscreenCompleted.style.display = "none";
 
   const state = await fetchRestStatus();
   if (state?.status === "running") {

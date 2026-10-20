@@ -24,10 +24,12 @@ body {
   line-height: 1.5;
 }
 
+/* ══ BROWSER BASE ══════════════════════════════════════════════════════════ */
+
 .app { min-height: 100vh; }
 
 .screen { display: flex; flex-direction: column; }
-.screen.hidden { display: none; }
+.screen.hidden { display: none !important; }
 
 /* ── Idle ── */
 .idle-wrap {
@@ -43,6 +45,17 @@ body {
 .idle-icon { font-size: 48px; color: var(--blue-light); }
 .idle-title { font-size: 22px; font-weight: 700; }
 .idle-sub { color: var(--text-muted); max-width: 320px; }
+.idle-hint { color: var(--text-muted); max-width: 360px; font-size: 12px; margin-top: 4px; }
+.idle-dots span {
+  animation: idle-dot-blink 1.4s ease-in-out infinite;
+  opacity: 0;
+}
+.idle-dots span:nth-child(2) { animation-delay: 0.2s; }
+.idle-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes idle-dot-blink {
+  0%, 80%, 100% { opacity: 0; }
+  40% { opacity: 1; }
+}
 
 /* ── Buttons ── */
 .btn-primary {
@@ -70,16 +83,8 @@ body {
   transition: background 0.15s;
 }
 .btn-ghost:hover { background: var(--surface-2); }
-.btn-reset { color: var(--text-muted); }
-.btn-reset:hover { color: var(--text); }
 
-/* ── Dashboard ── */
-#screen-dashboard {
-  padding: 14px;
-  gap: 10px;
-}
-
-/* Header */
+/* ── Header ── */
 .header {
   display: flex;
   align-items: center;
@@ -95,11 +100,16 @@ body {
 .header-icon { font-size: 18px; color: var(--blue-light); }
 .header-actions { display: flex; gap: 8px; }
 
+/* ── Dashboard / Running screen ── */
+#screen-dashboard {
+  padding: 14px;
+  gap: 10px;
+}
+
 /* Preflight strip */
 .preflight {
   display: flex;
   align-items: center;
-  gap: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -114,11 +124,7 @@ body {
   padding: 0 14px;
 }
 .preflight-item:first-child { padding-left: 0; }
-.preflight-sep {
-  width: 1px;
-  height: 28px;
-  background: var(--border);
-}
+.preflight-sep { width: 1px; height: 28px; background: var(--border); }
 .preflight-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
 .preflight-value { font-size: 12px; font-weight: 600; }
 .preflight-clean { color: var(--green); }
@@ -145,24 +151,49 @@ body {
   color: var(--text-muted);
 }
 .step.completed .step-circle { background: var(--green); border-color: var(--green); color: #000; }
+.step.failed .step-circle { background: var(--red); border-color: var(--red); color: #fff; }
+.step.testing .step-circle {
+  background: var(--amber); border-color: var(--amber); color: #000;
+  animation: step-pulse-amber 1.6s ease-in-out infinite;
+}
 .step.running .step-circle {
-  background: var(--blue);
-  border-color: var(--blue-light);
-  color: #fff;
+  background: var(--blue); border-color: var(--blue-light); color: #fff;
   animation: step-pulse 1.6s ease-in-out infinite;
 }
 .step.active .step-circle { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+.step-gate-circle { width: 22px !important; height: 22px !important; font-size: 10px !important; }
+.step.step-gate { padding-top: 4px; }
+.step-gate .step-label { font-size: 9px; }
+.step.step-gate.gate-running .step-gate-circle {
+  background: var(--amber); border-color: var(--amber); color: #000;
+  animation: step-pulse-amber 1.6s ease-in-out infinite;
+}
+.step.step-gate.gate-passed .step-gate-circle { background: var(--green); border-color: var(--green); color: #000; }
+.step.step-gate.gate-failed .step-gate-circle { background: var(--red); border-color: var(--red); color: #fff; }
+.step.step-gate.gate-running .step-label { color: var(--amber); font-weight: 500; }
+.step.step-gate.gate-passed .step-label { color: var(--green); }
+.step.step-gate.gate-failed .step-label { color: var(--red); font-weight: 500; }
+
+.step-connector-short { flex: 0.3 0.3 0% !important; min-width: 6px !important; margin-top: 15px !important; }
 @keyframes step-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(56, 139, 253, 0); }
   50%       { box-shadow: 0 0 0 7px rgba(56, 139, 253, 0.35); }
 }
+@keyframes step-pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0); }
+  50%       { box-shadow: 0 0 0 7px rgba(210, 153, 34, 0.35); }
+}
 .step-label { font-size: 10px; text-align: center; color: var(--text-muted); max-width: 75px; line-height: 1.3; }
 .step.active .step-label,
 .step.running .step-label { color: var(--blue-light); font-weight: 500; }
+.step.testing .step-label { color: var(--amber); font-weight: 500; }
 .step.completed .step-label { color: var(--text); }
+.step.failed .step-label { color: var(--red); font-weight: 500; }
 .step-duration { font-size: 9px; text-align: center; opacity: 0.9; margin-top: 1px; }
 .step-connector { flex: 1; height: 2px; background: var(--border); margin-top: 14px; min-width: 12px; }
 .step-connector.completed { background: var(--green); }
+.step-connector.failed { background: var(--red); }
 .step-connector.active { background: linear-gradient(to right, var(--green), var(--blue)); }
 
 /* Phase info */
@@ -182,7 +213,9 @@ body {
 .phase-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
 .status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; }
+.status-dot.testing { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: pulse 1.5s infinite; }
 .status-dot.completed { background: var(--green); }
+.status-dot.failed { background: var(--red); }
 .status-dot.pending { background: var(--border); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
 
@@ -194,7 +227,18 @@ body {
 .stat-total { font-size: 13px; font-weight: 400; color: var(--text-muted); }
 .stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 
-/* Activity */
+/* Git / activity */
+.git-activity {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 4px; padding: 5px 0 2px; font-size: 11px; color: var(--text-muted); margin-left: 15px;
+}
+.git-activity-icon { color: var(--blue-light); margin-right: 2px; }
+.git-file {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 6px; font-family: monospace; color: var(--text); font-size: 10px;
+}
+.git-file-more { color: var(--text-muted); font-style: italic; }
+
 .activity-section {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px;
   display: flex; flex-direction: column;
@@ -206,17 +250,11 @@ body {
 /* Phase commits list */
 .phase-commits {
   display: flex; flex-direction: column; gap: 6px;
-  margin-top: 4px;
-  max-height: 160px;
-  overflow-y: auto;
-  scroll-behavior: smooth;
+  margin-top: 4px; max-height: 160px; overflow-y: auto; scroll-behavior: smooth;
 }
 .commit-row {
   display: flex; align-items: center; gap: 10px;
-  padding: 7px 10px;
-  background: var(--surface-2);
-  border-radius: 6px;
-  font-size: 11px;
+  padding: 7px 10px; background: var(--surface-2); border-radius: 6px; font-size: 11px;
 }
 .commit-phase { color: var(--text-muted); min-width: 60px; }
 .commit-hash { font-family: monospace; color: var(--blue-light); min-width: 58px; }
@@ -224,55 +262,46 @@ body {
 .commit-fixed { color: var(--green); min-width: 52px; text-align: right; }
 .commit-dur { color: var(--text-muted); min-width: 36px; text-align: right; font-size: 11px; }
 
-/* ── Completed ── */
+/* ── Completed screen (browser) ── */
+#screen-completed > .header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
 .completed-wrap {
   display: flex; flex-direction: column;
   gap: 14px; padding: 20px;
   max-width: 680px; margin: 0 auto; width: 100%;
 }
+.completed-wrap > * { flex-shrink: 0; }
+
 .completed-header { display: flex; align-items: center; gap: 14px; }
 .completed-icon { font-size: 36px; flex-shrink: 0; }
 .completed-title { font-size: 18px; font-weight: 700; }
 .completed-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
 
-.completed-stats {
-  display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
+.completed-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .completed-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
 .completed-stat-value { font-size: 22px; font-weight: 700; }
 .completed-stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 
 .completed-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
 }
 .completed-section-title {
-  padding: 10px 14px;
-  font-size: 12px; font-weight: 600;
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; font-size: 12px; font-weight: 600;
+  border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px;
 }
 .issues-count {
-  background: var(--amber);
-  color: #000;
-  border-radius: 10px;
-  padding: 1px 7px;
-  font-size: 10px;
-  font-weight: 700;
+  background: var(--amber); color: #000; border-radius: 10px;
+  padding: 1px 7px; font-size: 10px; font-weight: 700;
 }
 
-/* Phase summary table */
 .phase-summary-row {
   display: grid;
   grid-template-columns: 22px 1fr 70px 70px 50px 80px;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  gap: 8px; align-items: center; padding: 8px 14px;
+  border-bottom: 1px solid var(--border); font-size: 12px;
 }
 .phase-summary-row:last-child { border-bottom: none; }
 .phase-summary-row:hover { background: var(--surface-2); }
@@ -283,36 +312,139 @@ body {
 .ps-dur { color: var(--text-muted); font-size: 11px; }
 .ps-commit { font-family: monospace; font-size: 11px; color: var(--blue-light); }
 
-/* Deferred issues */
-.issue-row {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
+.issue-row { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .issue-row:last-child { border-bottom: none; }
 .issue-file { font-family: monospace; font-size: 11px; color: var(--blue-light); margin-bottom: 2px; }
-.issue-rule { display: inline-block; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 10px; color: var(--amber); margin-bottom: 4px; }
+.issue-rule {
+  display: inline-block; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 6px; font-size: 10px; color: var(--amber); margin-bottom: 4px;
+}
 .issue-msg { color: var(--text); margin-bottom: 3px; }
 .issue-reason { color: var(--text-muted); font-size: 11px; }
 
-/* Links */
-.completed-links {
-  display: flex; gap: 10px;
+.completed-links { display: flex; gap: 10px; }
+.completed-link-wrap {
+  flex: 1; display: flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
 }
 .completed-link {
-  flex: 1;
-  display: flex; align-items: center; gap: 8px;
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  text-decoration: none;
-  color: var(--text);
-  font-size: 12px;
-  transition: background 0.15s, border-color 0.15s;
-  cursor: pointer;
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; background: var(--surface); border: none; border-radius: 0;
+  text-decoration: none; color: var(--text); font-size: 12px;
+  transition: background 0.15s; cursor: pointer;
 }
-.completed-link:hover { background: var(--surface-2); border-color: var(--blue); }
+.completed-link:hover { background: var(--surface-2); }
+.completed-link-wrap:hover { border-color: var(--blue); }
 .completed-link-icon { font-size: 18px; }
 .completed-link-label { font-weight: 600; }
 .completed-link-sub { color: var(--text-muted); font-size: 11px; }
+.completed-link-download {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 12px; background: var(--surface); border-left: 1px solid var(--border);
+  color: var(--text-muted); font-size: 13px; text-decoration: none;
+  transition: background 0.15s, color 0.15s; cursor: pointer;
+}
+.completed-link-download:hover { background: var(--surface-2); color: var(--text); }
+
+/* ── Markdown overlay ── */
+.md-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  z-index: 100; display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px 16px; overflow-y: auto;
+}
+.md-overlay.hidden { display: none; }
+.md-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  width: 100%; max-width: 720px; display: flex; flex-direction: column;
+}
+.md-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface);
+}
+.md-title { font-size: 13px; font-weight: 600; }
+.md-close { padding: 4px 10px; font-size: 11px; }
+.md-body { padding: 20px 24px; font-size: 13px; line-height: 1.7; color: var(--text); overflow-wrap: break-word; }
+.md-body h1 { font-size: 20px; font-weight: 700; margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.md-body h2 { font-size: 16px; font-weight: 600; margin: 24px 0 10px; }
+.md-body h3 { font-size: 14px; font-weight: 600; margin: 18px 0 8px; color: var(--blue-light); }
+.md-body p { margin: 0 0 10px; }
+.md-body ul, .md-body ol { margin: 0 0 10px; padding-left: 20px; }
+.md-body li { margin-bottom: 4px; }
+.md-body code { font-family: monospace; background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+.md-body pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; overflow-x: auto; margin: 0 0 12px; }
+.md-body pre code { background: none; border: none; padding: 0; font-size: 12px; }
+.md-body table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-size: 12px; }
+.md-body th { background: var(--surface-2); border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-weight: 600; }
+.md-body td { border: 1px solid var(--border); padding: 6px 10px; }
+.md-body tr:hover td { background: var(--surface-2); }
+.md-body strong { font-weight: 600; }
+.md-body em { font-style: italic; color: var(--text-muted); }
+.md-body hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.md-body blockquote { border-left: 3px solid var(--blue); margin: 0 0 12px; padding: 6px 12px; color: var(--text-muted); background: var(--surface-2); }
+.md-loading { color: var(--text-muted); padding: 40px; text-align: center; }
+.md-error { color: var(--red); padding: 40px; text-align: center; }
+
+
+/* ══ DESKTOP OVERRIDES (body.desktop set by JS on MCP connect) ═════════════
+   html/body height:100% is set inline by JS on connect.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* .app fills the iframe, screens inside can use flex:1 */
+body.desktop .app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Idle: center vertically within iframe */
+body.desktop .idle-wrap { min-height: 0; flex: 1; }
+
+/* Running screen: compact so everything fits without scrolling */
+body.desktop #screen-dashboard { padding: 8px 12px 12px; gap: 6px; }
+body.desktop .stepper { padding: 8px 12px; }
+body.desktop .step { gap: 4px; }
+body.desktop .step-circle { width: 26px; height: 26px; font-size: 11px; }
+body.desktop .step-label { font-size: 9px; }
+body.desktop .step-connector { margin-top: 12px; }
+body.desktop .phase-info { padding: 10px 14px; }
+body.desktop .phase-title { font-size: 15px; }
+body.desktop .phase-elapsed { margin-bottom: 6px; }
+body.desktop .stats-grid { gap: 6px; }
+body.desktop .stat-card { padding: 8px 12px; }
+body.desktop .stat-value { font-size: 18px; }
+body.desktop .stat-icon { font-size: 13px; margin-bottom: 2px; }
+/* Cap activity section so it never pushes content out of view */
+body.desktop .activity-section { max-height: 220px; overflow: hidden; }
+body.desktop .activity-section .phase-commits { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
+
+/* Completed screen: takes full iframe height, inner wrap scrolls */
+body.desktop #screen-completed {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body.desktop #screen-completed > .header { flex-shrink: 0; }
+
+/* Inline: cap height so it doesn't grow too tall in the chat panel */
+body.desktop:not(.fullscreen) .completed-wrap {
+  max-height: 420px;
+  overflow-y: auto;
+  gap: 12px;
+  padding-top: 12px;
+  padding-bottom: 16px;
+}
+
+/* Fullscreen: fill remaining height, scroll freely, leave room for chat toolbar */
+body.desktop.fullscreen #screen-completed {
+  min-height: 0;
+}
+body.desktop.fullscreen .completed-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 12px;
+  padding-top: 12px;
+  padding-bottom: 80px;
+}

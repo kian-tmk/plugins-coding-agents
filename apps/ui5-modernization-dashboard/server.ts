@@ -10,10 +10,10 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const SERVER_FILE = fileURLToPath(import.meta.url);
-const DIST_DIR = SERVER_FILE.endsWith(".ts")
-  ? path.join(path.dirname(SERVER_FILE), "dist")
-  : path.dirname(SERVER_FILE);
-const PROJECT_DIR = path.dirname(SERVER_FILE.endsWith(".ts") ? SERVER_FILE : DIST_DIR);
+const PROJECT_DIR = SERVER_FILE.endsWith(".ts")
+  ? path.dirname(SERVER_FILE)
+  : path.resolve(path.dirname(SERVER_FILE), "..");
+const DIST_DIR = path.join(PROJECT_DIR, "dist");
 
 const STATE_FILE = "/tmp/ui5-modernization-state.json";
 const resourceUri = "ui://ui5-modernization/mcp-app.html";
@@ -29,9 +29,14 @@ async function readState(): Promise<Record<string, unknown> | null> {
 
 async function writeState(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
   const existing = await readState() ?? {};
-  // Fresh run detected: new startedAt that differs from stored → replace instead of merge
-  const isNewRun = patch.startedAt && patch.startedAt !== existing.startedAt;
-  const merged = isNewRun ? { ...patch } : { ...existing, ...patch };
+  const isNewRun = !existing.startedAt || existing.status === "idle"
+    || (patch.status === "running" && existing.status !== "running");
+  if (isNewRun) {
+    const merged = { ...patch };
+    await fs.writeFile(STATE_FILE, JSON.stringify(merged, null, 2), "utf-8");
+    return merged;
+  }
+  const merged = { ...existing, ...patch, startedAt: existing.startedAt };
   await fs.writeFile(STATE_FILE, JSON.stringify(merged, null, 2), "utf-8");
   return merged;
 }
@@ -101,6 +106,45 @@ export function createServer(): McpServer {
         content: [{ type: "text", text: "Dashboard reset to idle." }],
         structuredContent: { status: "idle" },
       };
+    },
+  );
+
+  // Tool: get-file — read a markdown file by absolute path and return its content
+  registerAppTool(
+    server,
+    "get-file",
+    {
+      title: "Get File Content",
+      description: "Read a file (e.g. MODERNIZATION-REPORT.md) by absolute path and return its text content.",
+      inputSchema: z.object({ path: z.string() }),
+      outputSchema: z.object({ content: z.string(), filename: z.string() }),
+      _meta: { ui: { resourceUri } },
+    },
+    async (args: { path: string }): Promise<CallToolResult> => {
+      const filePath = args.path;
+      // Safety: only allow reading markdown files, no path traversal
+      const normalized = path.resolve(filePath);
+      if (!normalized.endsWith(".md")) {
+        return {
+          content: [{ type: "text", text: "Only .md files are supported." }],
+          structuredContent: { content: "", filename: "" },
+          isError: true,
+        };
+      }
+      try {
+        const content = await fs.readFile(normalized, "utf-8");
+        const filename = path.basename(normalized);
+        return {
+          content: [{ type: "text", text: `File: ${filename} (${content.length} chars)` }],
+          structuredContent: { content, filename },
+        };
+      } catch {
+        return {
+          content: [{ type: "text", text: `File not found: ${normalized}` }],
+          structuredContent: { content: "", filename: path.basename(filePath) },
+          isError: true,
+        };
+      }
     },
   );
 

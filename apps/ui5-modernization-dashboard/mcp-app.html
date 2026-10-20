@@ -14,7 +14,8 @@
         <div class="idle-wrap">
           <div class="idle-icon">⬡</div>
           <h1 class="idle-title">UI5 Modernization</h1>
-          <p class="idle-sub">Waiting for modernization agent to connect...</p>
+          <p class="idle-sub" id="idle-sub">Bereit für die Modernisierung</p>
+          <p class="idle-hint">Starte den Agenten in deinem Projekt — das Dashboard verbindet sich automatisch<span class="idle-dots"><span>.</span><span>.</span><span>.</span></span></p>
         </div>
       </div>
 
@@ -28,7 +29,7 @@
             <span>UI5 Modernization</span>
           </div>
           <div class="header-actions">
-            <button class="btn-ghost btn-reset" id="btn-reset-header">↺ Reset</button>
+            <button class="btn-ghost btn-fullscreen" id="btn-fullscreen">⤢ Fullscreen</button>
           </div>
         </header>
 
@@ -111,6 +112,7 @@
             <span class="activity-dot"></span>
             <span id="activity-text">—</span>
           </div>
+          <div id="git-activity" class="git-activity" style="display:none"></div>
 
           <!-- Phase list (completed phases with commits) -->
           <div id="phase-commits" class="phase-commits"></div>
@@ -120,6 +122,18 @@
 
       <!-- ═══ COMPLETED SCREEN ═══ -->
       <div id="screen-completed" class="screen hidden">
+
+        <!-- Header (reused from dashboard screen) -->
+        <header class="header">
+          <div class="header-title">
+            <span class="header-icon">⬡</span>
+            <span>UI5 Modernization</span>
+          </div>
+          <div class="header-actions">
+            <button class="btn-ghost btn-fullscreen" id="btn-fullscreen-completed">⤢ Fullscreen</button>
+          </div>
+        </header>
+
         <div class="completed-wrap">
 
           <!-- Title -->
@@ -152,7 +166,17 @@
           <!-- Links -->
           <div class="completed-links" id="completed-links"></div>
 
-          <button class="btn-ghost btn-reset" id="btn-restart">↺ Reset dashboard</button>
+        </div>
+      </div>
+
+      <!-- ═══ MARKDOWN VIEWER OVERLAY ═══ -->
+      <div id="md-overlay" class="md-overlay hidden">
+        <div class="md-panel">
+          <div class="md-header">
+            <span id="md-title" class="md-title">—</span>
+            <button class="btn-ghost md-close" id="md-close">✕ Close</button>
+          </div>
+          <div id="md-body" class="md-body"></div>
         </div>
       </div>
 
