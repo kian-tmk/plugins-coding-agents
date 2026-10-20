@@ -81,11 +81,14 @@ If the prompt contains "Do not ask for confirmation" or similar: skip mode selec
 
 ### Ask the user once: which verification mode?
 
-| Mode | What happens at each gate |
-|---|---|
-| **Full autonomous** | Run tests → on failure, debug+fix (stop after 3 retries or 1 failed debug). On stop, emit report and ask user. |
-| **Half autonomous** | Run tests → emit structured report. Wait for user "continue". |
-| **Manual** | Skip tests. Print one-line summary. Wait for user "continue". |
+**Use the `AskUserQuestion` tool** (never a plain chat message) to present the mode selection. This renders a structured choice the user can navigate with keyboard.
+
+Question: `"Welchen Verifikationsmodus möchtest du verwenden?"`
+
+Options:
+- **Full autonomous** — Tests laufen automatisch, Agent fixt Fehler selbst (max. 3 Versuche). Nur bei unbehebbaren Fehlern wird nachgefragt. Kann 2–5 Min. pro Phase dauern.
+- **Half autonomous** — Tests laufen automatisch, Agent fixt nichts. Nach jeder Phase Ergebnis + warte auf "continue".
+- **Manual** — Keine Tests, nur Linter-Check. Nach jeder Phase kurze Zusammenfassung + warte auf "continue". Schnellster Modus.
 
 Save mode. Do not re-ask between phases.
 
@@ -98,28 +101,210 @@ Read `references/build-and-test-commands.md`. Chrome DevTools MCP must be connec
 
 ## Dashboard Integration
 
-The UI5 Modernization Dashboard (MCP App) can display live progress when running alongside this skill. Integration is **optional and non-blocking** — if the server is not reachable the skill continues normally.
+The UI5 Modernization Dashboard shows live progress in a browser tab and optionally as an inline panel in Claude Desktop. Integration is **optional and non-blocking** — if declined or unavailable the skill continues normally.
 
 ### Setup (once, in Phase 0)
 
-After the prerequisite check, detect whether the dashboard is running and define the helper used throughout the skill:
+After the prerequisite check and **before** asking for the verification mode, follow this **exact sequence** — do not combine steps, do not skip, do not reorder:
+
+#### Dashboard-Frage (AskUserQuestion — Schritt A)
+
+Call `AskUserQuestion` with exactly this question. Do NOT combine it with the verification mode question or any other question.
+
+Question: `"Möchtest du das Dashboard mit dem aktuellen Aktualisierungsfortschritt angezeigt bekommen?"`
+
+Options:
+- **Ja** — Dashboard im Browser öffnen (empfohlen)
+- **Nein** — Ohne Dashboard fortfahren
+
+→ If **Nein**: set `DASHBOARD=false`, skip Steps 1–4, skip the Claude Desktop question. Go directly to the verification mode question.
+
+→ If **Ja**: execute Steps 1–4 (server start + browser open), then continue with Schritt B.
+
+#### Steps 1–4: Server starten und Browser öffnen
+
+(See below.) Only run these if the user answered **Ja** to Schritt A.
+
+#### Claude Desktop-Frage (AskUserQuestion — Schritt B)
+
+Only reach this step after Steps 1–4 have completed successfully and `DASHBOARD=true`. Call `AskUserQuestion` as a **separate, new call** — not bundled with the dashboard question or the verification mode question.
+
+**Before asking: run this bash command to check the actual current state of the config file — do NOT infer from the conversation history:**
 
 ```bash
-curl -s http://localhost:3001/api/status > /dev/null 2>&1 && DASHBOARD=true || DASHBOARD=false
+# Detect config path (same logic as install-dashboard Phase 0)
+for APP_CANDIDATE in "/Applications/Claude.app" "/Applications/Claude-3p.app"; do
+  if [ -d "$APP_CANDIDATE" ]; then
+    APP_BASENAME=$(basename "$APP_CANDIDATE" .app)
+    DESKTOP_CONFIG="$HOME/Library/Application Support/$APP_BASENAME/claude_desktop_config.json"
+    break
+  fi
+done
+
+```bash
+# Find the active Claude Desktop config — prefer deploymentMode=3p if multiple configs exist
+DESKTOP_CONFIG=$(python3 -c "
+import json, os
+
+candidates = [
+    os.path.expanduser('~/Library/Application Support/Claude-3p/claude_desktop_config.json'),
+    os.path.expanduser('~/Library/Application Support/Claude/claude_desktop_config.json'),
+]
+
+result = ''
+fallback = ''
+for path in candidates:
+    if os.path.isfile(path):
+        try:
+            cfg = json.load(open(path))
+            if cfg.get('deploymentMode') == '3p':
+                result = path
+                break
+        except:
+            pass
+        if not fallback:
+            fallback = path
+
+print(result or fallback)
+" 2>/dev/null)
+
+DASHBOARD_SERVER_JS="$DASHBOARD_DIR/dist-server/main.js"
+
+if [ -f "$DESKTOP_CONFIG" ]; then
+  EXISTING=$(python3 -c "
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+    args = cfg.get('mcpServers',{}).get('ui5-modernization-dashboard',{}).get('args',[])
+    print(args[0] if args else 'NOT_SET')
+except: print('NOT_SET')
+" "$DESKTOP_CONFIG" 2>/dev/null)
+  echo "DESKTOP_CONFIG: $DESKTOP_CONFIG"
+  echo "EXISTING_ENTRY: $EXISTING"
+  echo "EXPECTED: $DASHBOARD_SERVER_JS"
+  if [ -n "$EXISTING" ] && [ "$EXISTING" != "NOT_SET" ] && [ "$EXISTING" = "$DASHBOARD_SERVER_JS" ]; then
+    echo "STATUS: already_configured"
+  else
+    echo "STATUS: needs_setup"
+  fi
+else
+  echo "DESKTOP_CONFIG: not_found"
+  echo "STATUS: needs_setup"
+fi
+```
+
+Read the `STATUS:` line from the bash output above.
+
+- `STATUS: already_configured` → skip the question, tell the user "Claude Desktop ist bereits eingerichtet."
+- `STATUS: needs_setup` (or `DESKTOP_CONFIG: not_found`) → ask the question below. An empty or `NOT_SET` entry always means needs_setup — never skip when the entry is missing.
+
+Only if `STATUS: needs_setup`, ask:
+
+Question: `"Auch in Claude Desktop einrichten?"`
+
+Options:
+- **Ja, jetzt einrichten** — Einmaliges Setup via `/install-dashboard` (benötigt Claude Desktop Neustart) (Empfohlen)
+- **Nein, nur Browser** — Überspringen
+
+→ If **Ja, jetzt einrichten**: invoke the `install-dashboard` skill now and wait for it to complete.
+
+→ If **Nein, nur Browser**: continue.
+
+After Schritt B (regardless of answer): proceed to the verification mode question.
+
+**IMPORTANT — common mistakes to avoid:**
+- Do NOT ask Schritt B before starting the server (Steps 1–4 must run first)
+- Do NOT bundle Schritt A, Schritt B, and the verification mode into one `AskUserQuestion` call
+- Do NOT skip Schritt B when the user answered Ja to Schritt A
+- The next question after Schritt B is always the verification mode — not another dashboard question
+
+If the user answered **Ja** to Schritt A, execute the following steps in order, then proceed to Schritt B:
+
+#### Step 1: Resolve the dashboard directory
+
+```bash
+# Try git root first, then $HOME fallback
+DASHBOARD_DIR="$(git rev-parse --show-toplevel 2>/dev/null)/apps/ui5-modernization-dashboard"
+if [ ! -f "$DASHBOARD_DIR/main.ts" ]; then
+  DASHBOARD_DIR="$HOME/plugins-coding-agents/apps/ui5-modernization-dashboard"
+fi
+if [ ! -f "$DASHBOARD_DIR/main.ts" ]; then
+  echo "⚠ Dashboard-Verzeichnis nicht gefunden — Dashboard wird übersprungen."
+  DASHBOARD=false
+fi
+```
+
+#### Step 2: Ensure compiled server exists
+
+```bash
+if [ "$DASHBOARD" != "false" ] && [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ]; then
+  echo "⏳ Dashboard wird gebaut..."
+  (cd "$DASHBOARD_DIR" && npm run build > /tmp/ui5-dashboard-build.log 2>&1)
+  if [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ]; then
+    echo "⚠ Dashboard-Build fehlgeschlagen — Log: /tmp/ui5-dashboard-build.log"
+    DASHBOARD=false
+  fi
+fi
+```
+
+#### Step 3: Start the server if not already running
+
+```bash
+if [ "$DASHBOARD" != "false" ]; then
+  if curl -s http://localhost:3001/api/status > /dev/null 2>&1; then
+    echo "✅ Dashboard-Server läuft bereits."
+    DASHBOARD=true
+  else
+    node "$DASHBOARD_DIR/dist-server/main.js" > /tmp/ui5-dashboard.log 2>&1 &
+    for i in 1 2 3 4 5; do
+      sleep 1
+      curl -s http://localhost:3001/api/status > /dev/null 2>&1 && break
+    done
+    if curl -s http://localhost:3001/api/status > /dev/null 2>&1; then
+      DASHBOARD=true
+    else
+      echo "⚠ Dashboard-Server konnte nicht gestartet werden — Log: /tmp/ui5-dashboard.log"
+      DASHBOARD=false
+    fi
+  fi
+fi
+```
+
+#### Step 4: Reset state and open the browser
+
+```bash
+if [ "$DASHBOARD" = "true" ]; then
+  # Wipe any cached state from a previous run so the dashboard starts on the idle screen
+  curl -s -X POST http://localhost:3001/mcp \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"reset-status","arguments":{}}}' > /dev/null 2>&1 || true
+  echo "✅ Dashboard gestartet: http://localhost:3001"
+  open http://localhost:3001 2>/dev/null || true
+fi
+```
+
+After the dashboard setup, define the helper used throughout the skill:
+
+```bash
 START_TS=$(date +%s)
 
 elapsed_seconds() { echo $(( $(date +%s) - START_TS )); }
 
 push_status() {
   [ "$DASHBOARD" = "true" ] || return 0
-  # Inject elapsedSeconds into every push automatically
-  local payload="$1"
   local elapsed=$(elapsed_seconds)
-  payload=$(echo "$payload" | sed "s/}$/,\"elapsedSeconds\":$elapsed}/")
+  local payload
+  payload=$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+d['elapsedSeconds'] = $elapsed
+print(json.dumps(d))
+" "$1" 2>/dev/null) || payload="$1"
   curl -s -X POST http://localhost:3001/mcp \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"update-status\",\"arguments\":$1}}" > /dev/null 2>&1 || true
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"update-status\",\"arguments\":$payload}}" > /dev/null 2>&1 || true
 }
 ```
 
@@ -131,8 +316,15 @@ All `push_status` calls are fire-and-forget (`> /dev/null`). A failed call must 
 |---|---|
 | After linter baseline (Phase 0) | `status:"running"`, `project`, `projectPath`, `ui5Version`, `linterBaseline`, `totalFindings`, `phases` (all pending — use exact schema below), `startedAt` |
 | Each phase starts | `currentPhase`, phase N `status:"running"`, `phaseStartedAt`, `currentActivity` |
+| Each sub-agent launched | `currentActivity` describing what is being fixed (e.g. `"Fixing manifest.json — no-outdated-manifest-version"`) |
+| Each sub-agent returns | `currentActivity` with result summary (e.g. `"manifest.json fixed — 3 findings resolved"`) |
+| After autofix / linter re-run | `findingsFixed`, `findingsRemaining`, `overallProgress`, `currentActivity` |
 | Each phase ends (after commit) | phase N `status:"completed"`, `findingsAfter`, `filesChanged`, `commit`, `commitMessage`, `durationSeconds`, `findingsFixed`, `findingsRemaining`, `overallProgress` |
 | Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
+
+**Rule:** push `currentActivity` whenever the agent switches tasks — before launching a sub-agent, after it returns, before running the linter, before committing. Every meaningful action should be visible in the dashboard within seconds.
+
+**Critical — phase object must be fully updated on completion:** When a phase ends, the `phases` array must contain the updated phase object with all fields filled in (`status:"completed"`, `findingsAfter`, `filesChanged`, `commit`, `commitMessage`, `durationSeconds`). A push that only updates top-level fields like `findingsFixed` without updating the phase object will show `0 commits` and stale stats in the dashboard. Use python3 to mutate the phase in `$PHASES_JSON` before every phase-completion push (see Phase 1 example).
 
 ## Operating Principles
 
@@ -172,7 +364,7 @@ Parse: total errors/warnings, grouped by rule ID and file. Store for final compa
 Push initial dashboard state after parsing the baseline:
 
 ```bash
-push_status "{\"status\":\"running\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"ui5Version\":\"$UI5_VERSION\",\"linterBaseline\":$BASELINE_COUNT,\"totalFindings\":$BASELINE_COUNT,\"findingsFixed\":0,\"findingsRemaining\":$BASELINE_COUNT,\"currentPhase\":0,\"overallProgress\":0,\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+push_status "{\"status\":\"running\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"ui5Version\":\"$UI5_VERSION\",\"verificationMode\":\"$VERIFICATION_MODE\",\"linterBaseline\":$BASELINE_COUNT,\"totalFindings\":$BASELINE_COUNT,\"findingsFixed\":0,\"findingsRemaining\":$BASELINE_COUNT,\"currentPhase\":0,\"overallProgress\":0,\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
 ```
 
 Where `$PHASES_JSON` is the phases array with all phases set to `"status":"pending"`, built from the linter output.
@@ -197,7 +389,17 @@ When updating a phase (start/end), carry all fields forward — only change `sta
 Push phase start before applying autofix:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1: Mechanical Baseline\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+PHASE_1_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 1:
+        p['status'] = 'running'
+        p['findingsBefore'] = $BASELINE_COUNT
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1: Mechanical Baseline\",\"phaseStartedAt\":\"$PHASE_1_STARTED_AT\",\"phases\":$PHASES_JSON}"
 ```
 
 ```bash
@@ -215,14 +417,45 @@ push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Au
 
 ### Step 1.3: Test Starter modernization
 
+Push before launching:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Modernizing test starter...\",\"phases\":$PHASES_JSON}"
+```
+
 Launch sub-agent with `modernize-test-starter`. Use custom prompt instructing it to: read the skill, run Phase 0 detection completely before changes, follow ALL phases, verify against the 14-item Completion Checklist.
+
+Push after sub-agent returns:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Test starter modernized — running linter check...\",\"phases\":$PHASES_JSON}"
+```
 
 ### Phase 1 commit + gate
 
-Push phase completion after commit:
+After committing, collect phase metrics and update the phase object to `completed`:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1 complete\",\"findingsFixed\":$FIXED_1,\"findingsRemaining\":$REMAINING_1,\"overallProgress\":$PROGRESS_1,\"phases\":$PHASES_JSON}"
+COMMIT_1=$(git rev-parse --short HEAD)
+COMMIT_MSG_1=$(git log -1 --pretty=%s)
+FILES_1=$(git diff-tree --no-commit-id -r --name-only HEAD | wc -l | tr -d ' ')
+PHASE_START_TS=$(date -d "$PHASE_1_STARTED_AT" +%s 2>/dev/null || python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('${PHASE_1_STARTED_AT}'.replace('Z','+00:00')).timestamp()))")
+DURATION_1=$(( $(date +%s) - PHASE_START_TS ))
+
+# Update phase 1 object to completed with all fields filled in
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 1:
+        p['status'] = 'completed'
+        p['findingsAfter'] = $REMAINING_1
+        p['filesChanged'] = $FILES_1
+        p['commit'] = '$COMMIT_1'
+        p['commitMessage'] = '$COMMIT_MSG_1'
+        p['durationSeconds'] = $DURATION_1
+print(json.dumps(phases))
+")
+
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1 complete — gate running\",\"findingsFixed\":$FIXED_1,\"findingsRemaining\":$REMAINING_1,\"overallProgress\":$PROGRESS_1,\"phases\":$PHASES_JSON}"
 ```
 
 ## Phase 2: Foundation
@@ -232,12 +465,32 @@ push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Ph
 Push phase start before launching sub-agents:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Phase 2: Foundation\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+PHASE_2_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 2:
+        p['status'] = 'running'
+        p['findingsBefore'] = $REMAINING_1
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Phase 2: Foundation\",\"phaseStartedAt\":\"$PHASE_2_STARTED_AT\",\"phases\":$PHASES_JSON}"
 ```
 
 **Important:** Always include `\"currentPhase\":2` in every Phase 2 `push_status` call — not just `currentActivity`. The dashboard uses `currentPhase` to highlight the active stepper step.
 
+Push before launching the sub-agent:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Fixing manifest.json...\",\"phases\":$PHASES_JSON}"
+```
+
 Launch sub-agent with `fix-manifest-json`. Pass all `manifest.json` errors from rules: `no-outdated-manifest-version`, `no-legacy-ui5-version-in-manifest`, `no-deprecated-library`, `no-deprecated-component`, `no-removed-manifest-property`, plus `no-deprecated-api` with "view type"/"model type"/"resources/js".
+
+Push after sub-agent returns:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"manifest.json fixed — running Component.js fix...\",\"phases\":$PHASES_JSON}"
+```
 
 ### Step 2.2: Component.js
 
@@ -245,18 +498,39 @@ Launch sub-agent with `fix-component-async`. Unconditional — apply even if lin
 
 ### Step 2.3: Verify Component.js
 
+Push before verification:
 ```bash
-node {skills-dir}/fix-component-async/scripts/verify-component.js {project-path}
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Verifying Component.js async setup...\",\"phases\":$PHASES_JSON}"
 ```
 
 If exit code 1, fix: `imported-interface` → remove from deps, use string literal; `interface-not-string` → replace variable with string; `missing-interface` → add to metadata. Re-run to confirm.
 
 ### Phase 2 commit + gate
 
-Push phase completion after commit:
+After committing, collect phase metrics and update the phase object to `completed`:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Phase 2 complete\",\"findingsFixed\":$FIXED_2,\"findingsRemaining\":$REMAINING_2,\"overallProgress\":$PROGRESS_2,\"phases\":$PHASES_JSON}"
+COMMIT_2=$(git rev-parse --short HEAD)
+COMMIT_MSG_2=$(git log -1 --pretty=%s)
+FILES_2=$(git diff-tree --no-commit-id -r --name-only HEAD | wc -l | tr -d ' ')
+PHASE_START_TS=$(date -d "$PHASE_2_STARTED_AT" +%s 2>/dev/null || python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('${PHASE_2_STARTED_AT}'.replace('Z','+00:00')).timestamp()))")
+DURATION_2=$(( $(date +%s) - PHASE_START_TS ))
+
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 2:
+        p['status'] = 'completed'
+        p['findingsAfter'] = $REMAINING_2
+        p['filesChanged'] = $FILES_2
+        p['commit'] = '$COMMIT_2'
+        p['commitMessage'] = '$COMMIT_MSG_2'
+        p['durationSeconds'] = $DURATION_2
+print(json.dumps(phases))
+")
+
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Phase 2 complete — gate running\",\"findingsFixed\":$FIXED_2,\"findingsRemaining\":$REMAINING_2,\"overallProgress\":$PROGRESS_2,\"phases\":$PHASES_JSON}"
 ```
 
 ## Phase 3: Module System & Globals
@@ -268,10 +542,25 @@ push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Ph
 Push phase start before launching sub-agents:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Phase 3: Module System & Globals\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+PHASE_3_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 3:
+        p['status'] = 'running'
+        p['findingsBefore'] = $REMAINING_2
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Phase 3: Module System & Globals\",\"phaseStartedAt\":\"$PHASE_3_STARTED_AT\",\"phases\":$PHASES_JSON}"
 ```
 
 ### Step 3.1: Parallel batch
+
+Push before launching:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Fixing JS globals, XML globals and pseudo-modules in parallel...\",\"phases\":$PHASES_JSON}"
+```
 
 Launch sub-agents in parallel (up to 8 concurrent):
 - `fix-js-globals` for JS `no-globals` errors + routed `no-deprecated-api` cases
@@ -282,9 +571,19 @@ Launch sub-agents in parallel (up to 8 concurrent):
 
 ### Step 3.1b: Regression check
 
+Push before re-run:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Regression check after parallel batch...\",\"phases\":$PHASES_JSON}"
+```
+
 Re-run linter. If new errors appear for Step 3.1 rules, launch a second batch for those. Ignore errors belonging to other phases.
 
 ### Step 3.2: fix-linter-blind-spots
+
+Push before launching:
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Fixing linter blind spots...\",\"phases\":$PHASES_JSON}"
+```
 
 Launch one sub-agent. Instruct it to: read the skill, read manifest for namespace, run `detect-blind-spots.js`, fix all patterns, re-run script to confirm zero total.
 
@@ -296,10 +595,30 @@ Launch one sub-agent. Instruct it to: read the skill, build dependency graph, au
 
 Re-run linter to verify no regression before committing.
 
-Push phase completion after commit:
+After committing, collect phase metrics and update the phase object to `completed`:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Phase 3 complete\",\"findingsFixed\":$FIXED_3,\"findingsRemaining\":$REMAINING_3,\"overallProgress\":$PROGRESS_3,\"phases\":$PHASES_JSON}"
+COMMIT_3=$(git rev-parse --short HEAD)
+COMMIT_MSG_3=$(git log -1 --pretty=%s)
+FILES_3=$(git diff-tree --no-commit-id -r --name-only HEAD | wc -l | tr -d ' ')
+PHASE_START_TS=$(date -d "$PHASE_3_STARTED_AT" +%s 2>/dev/null || python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('${PHASE_3_STARTED_AT}'.replace('Z','+00:00')).timestamp()))")
+DURATION_3=$(( $(date +%s) - PHASE_START_TS ))
+
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 3:
+        p['status'] = 'completed'
+        p['findingsAfter'] = $REMAINING_3
+        p['filesChanged'] = $FILES_3
+        p['commit'] = '$COMMIT_3'
+        p['commitMessage'] = '$COMMIT_MSG_3'
+        p['durationSeconds'] = $DURATION_3
+print(json.dumps(phases))
+")
+
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Phase 3 complete — gate running\",\"findingsFixed\":$FIXED_3,\"findingsRemaining\":$REMAINING_3,\"overallProgress\":$PROGRESS_3,\"phases\":$PHASES_JSON}"
 ```
 
 ## Phase 4: Deprecated APIs
@@ -309,7 +628,17 @@ push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Ph
 Push phase start before launching sub-agents:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Phase 4: Deprecated APIs\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+PHASE_4_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 4:
+        p['status'] = 'running'
+        p['findingsBefore'] = $REMAINING_3
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Phase 4: Deprecated APIs\",\"phaseStartedAt\":\"$PHASE_4_STARTED_AT\",\"phases\":$PHASES_JSON}"
 ```
 
 ### Execution
@@ -322,10 +651,30 @@ Re-run linter. Second batch for new Phase 4 errors only.
 
 ### Phase 4 commit + gate
 
-Push phase completion after commit:
+After committing, collect phase metrics and update the phase object to `completed`:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Phase 4 complete\",\"findingsFixed\":$FIXED_4,\"findingsRemaining\":$REMAINING_4,\"overallProgress\":$PROGRESS_4,\"phases\":$PHASES_JSON}"
+COMMIT_4=$(git rev-parse --short HEAD)
+COMMIT_MSG_4=$(git log -1 --pretty=%s)
+FILES_4=$(git diff-tree --no-commit-id -r --name-only HEAD | wc -l | tr -d ' ')
+PHASE_START_TS=$(date -d "$PHASE_4_STARTED_AT" +%s 2>/dev/null || python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('${PHASE_4_STARTED_AT}'.replace('Z','+00:00')).timestamp()))")
+DURATION_4=$(( $(date +%s) - PHASE_START_TS ))
+
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 4:
+        p['status'] = 'completed'
+        p['findingsAfter'] = $REMAINING_4
+        p['filesChanged'] = $FILES_4
+        p['commit'] = '$COMMIT_4'
+        p['commitMessage'] = '$COMMIT_MSG_4'
+        p['durationSeconds'] = $DURATION_4
+print(json.dumps(phases))
+")
+
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Phase 4 complete — gate running\",\"findingsFixed\":$FIXED_4,\"findingsRemaining\":$REMAINING_4,\"overallProgress\":$PROGRESS_4,\"phases\":$PHASES_JSON}"
 ```
 
 ## Phase 5: CSP Compliance
@@ -337,7 +686,17 @@ CSP comes last because earlier phases may introduce inline blocks.
 Push phase start before launching sub-agents:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Phase 5: CSP Compliance\",\"phaseStartedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+PHASE_5_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 5:
+        p['status'] = 'running'
+        p['findingsBefore'] = $REMAINING_4
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Phase 5: CSP Compliance\",\"phaseStartedAt\":\"$PHASE_5_STARTED_AT\",\"phases\":$PHASES_JSON}"
 ```
 
 Launch sub-agents for files with `csp-unsafe-inline-script`. Use template with `fix-csp-compliance`.
@@ -346,15 +705,75 @@ Launch sub-agents for files with `csp-unsafe-inline-script`. Use template with `
 
 Final linter run for error count.
 
-Push phase completion after commit:
+After committing, collect phase metrics and update the phase object to `completed`:
 
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Phase 5 complete\",\"findingsFixed\":$FIXED_5,\"findingsRemaining\":$REMAINING_5,\"overallProgress\":$PROGRESS_5,\"phases\":$PHASES_JSON}"
+COMMIT_5=$(git rev-parse --short HEAD)
+COMMIT_MSG_5=$(git log -1 --pretty=%s)
+FILES_5=$(git diff-tree --no-commit-id -r --name-only HEAD | wc -l | tr -d ' ')
+PHASE_START_TS=$(date -d "$PHASE_5_STARTED_AT" +%s 2>/dev/null || python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('${PHASE_5_STARTED_AT}'.replace('Z','+00:00')).timestamp()))")
+DURATION_5=$(( $(date +%s) - PHASE_START_TS ))
+
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == 5:
+        p['status'] = 'completed'
+        p['findingsAfter'] = $REMAINING_5
+        p['filesChanged'] = $FILES_5
+        p['commit'] = '$COMMIT_5'
+        p['commitMessage'] = '$COMMIT_MSG_5'
+        p['durationSeconds'] = $DURATION_5
+print(json.dumps(phases))
+")
+
+push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Phase 5 complete — gate running\",\"findingsFixed\":$FIXED_5,\"findingsRemaining\":$REMAINING_5,\"overallProgress\":$PROGRESS_5,\"phases\":$PHASES_JSON}"
 ```
 
 ## Verification Gate
 
 After every phase commit, run the gate matching the mode chosen in Phase 0. **Use 600000ms timeout** for all test commands.
+
+Before starting the gate, set `gateStatus: "running"` on the current phase so the dashboard shows the gate circle:
+
+```bash
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == $CURRENT_PHASE:
+        p['gateStatus'] = 'running'
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Verification gate — tests laufen...\",\"phases\":$PHASES_JSON}"
+```
+
+After the gate completes, push the result — set `gateStatus` to `"passed"` or `"failed"` (leave `phase.status` unchanged):
+
+```bash
+# On pass:
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == $CURRENT_PHASE:
+        p['gateStatus'] = 'passed'
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests bestanden ✅\",\"phases\":$PHASES_JSON}"
+
+# On fail (after retries exhausted):
+PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
+import json, sys
+phases = json.load(sys.stdin)
+for p in phases:
+    if p['id'] == $CURRENT_PHASE:
+        p['gateStatus'] = 'failed'
+print(json.dumps(phases))
+")
+push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests fehlgeschlagen ❌ — warte auf Nutzer\",\"phases\":$PHASES_JSON}"
+```
 
 ### Full autonomous
 
@@ -368,7 +787,7 @@ Sub-agent instructions:
 5. On fail → analyze, attempt minimal fix (broken import/path/assertion only — never modernize code), re-run. Stop after 3 retries or 1 failed debug.
 6. **Scope constraint:** Only fix failing tests caused by current phase. Never apply other-phase modernizations.
 
-After return: ✅ → proceed. ❌ → print summary, ask user.
+After return: ✅ → push completed, proceed. ❌ → push failed, print summary, ask user.
 
 ### Half autonomous
 
@@ -378,9 +797,11 @@ Same sub-agent but do NOT debug failures. Report results only:
 Failed test names (≤10)
 ```
 
-Wait for user: "continue" / "skip phase" / "run tests" / "abort".
+Push result (completed or failed), then wait for user: "continue" / "skip phase" / "run tests" / "abort".
 
 ### Manual
+
+Skip tests entirely. Do NOT push `testing` state — go directly from the phase-completion push to the next phase.
 
 Print: `Phase {N} done. Files: {count}. Fixed: {count}. Deferred: {count}.`
 Wait for user "continue".
@@ -441,7 +862,7 @@ Commit: `docs: add modernization report and issues`
 Push run completion after the docs commit:
 
 ```bash
-push_status "{\"status\":\"completed\",\"currentActivity\":\"Modernization complete\",\"overallProgress\":100,\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"findingsFixed\":$FIXED_TOTAL,\"findingsRemaining\":0,\"phases\":$PHASES_JSON,\"deferredIssues\":$DEFERRED_JSON}"
+push_status "{\"status\":\"completed\",\"currentActivity\":\"Modernization complete\",\"overallProgress\":100,\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"findingsFixed\":$FIXED_TOTAL,\"findingsRemaining\":0,\"reportPath\":\"$PROJECT_PATH/MODERNIZATION-REPORT.md\",\"issuesPath\":\"$PROJECT_PATH/MODERNIZATION-ISSUES.md\",\"phases\":$PHASES_JSON,\"deferredIssues\":$DEFERRED_JSON}"
 ```
 
 ## Context Management

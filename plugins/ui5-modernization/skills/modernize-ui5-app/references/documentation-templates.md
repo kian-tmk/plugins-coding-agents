@@ -40,8 +40,8 @@ Use this template for the final summary:
 ```markdown
 # UI5 Modernization Summary
 
-Model: [MODEL-NAME]
-Generated: [DATE]
+Model: [your actual model name as reported by your system, e.g. claude-sonnet-4-5]
+Generated: [today's date in YYYY-MM-DD format]
 Verification mode: [full autonomous / half autonomous / manual]
 
 ## Statistics
