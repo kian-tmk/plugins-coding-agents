@@ -162,12 +162,19 @@ Ausgabe nach erfolgreichem Patch:
 Server: <DASHBOARD_SERVER_JS>
 Config: ~/Library/Application Support/Claude/claude_desktop_config.json
 
-➡ Bitte starte Claude Desktop jetzt neu.
+➡ Nächste Schritte:
+   1. Claude Desktop jetzt komplett neu starten (Cmd+Q, nicht nur das Fenster schließen) —
+      MCP-Server werden nur beim Start geladen.
+   2. Claude Desktop öffnen und einen neuen Chat starten.
+   3. Nach dem Modernisierungs-Status fragen, z. B.:
+         „Wie ist der aktuelle Status meiner UI5-Modernisierung?"
+      (Die genaue Formulierung ist egal — jede Frage nach dem Modernisierungs-Status
+       öffnet das Dashboard-Panel direkt im Chat.)
 
-Danach kannst du den Modernisierungsfortschritt direkt im Chat sehen.
-Starte dazu eine Modernisierung oder frage:
-"Zeig mir den aktuellen Modernisierungsstatus"
+Sobald eine Modernisierung läuft, siehst du den Fortschritt dort live.
 ```
+
+Die konkrete Beispielfrage anpassen ist erlaubt (z. B. „Zeig mir den UI5-Modernisierungsfortschritt") — wichtig ist nur, dass klar wird: **Claude Desktop öffnen → nach dem Modernisierungs-Status fragen**.
 
 ---
 

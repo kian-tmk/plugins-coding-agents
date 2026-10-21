@@ -373,16 +373,16 @@ Where `$PHASES_JSON` is the phases array with all phases set to `"status":"pendi
 
 ```json
 [
-  {"id":1,"name":"Mechanical Baseline","description":"Autofix + test starter modernization","status":"pending","skills":["modernize-test-starter"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
-  {"id":2,"name":"Foundation","description":"manifest.json + Component.js","status":"pending","skills":["fix-manifest-json","fix-component-async"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
-  {"id":3,"name":"Module System & Globals","description":"JS globals, pseudo-modules, cycles, blind spots","status":"pending","skills":["fix-js-globals","fix-xml-globals","fix-pseudo-modules","fix-cyclic-deps","fix-linter-blind-spots"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
-  {"id":4,"name":"Deprecated APIs","description":"Replace deprecated APIs and themes","status":"pending","skills":["fix-bootstrap-params","fix-library-init","fix-control-renderer","fix-deprecated-controls","fix-partially-deprecated-apis","fix-table-row-mode","fix-xml-native-html","fix-fiori-elements-extensions"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
-  {"id":5,"name":"CSP Compliance","description":"Externalize inline scripts","status":"pending","skills":["fix-csp-compliance"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null},
-  {"id":6,"name":"Documentation","description":"Write modernization report and issues file","status":"pending","skills":[],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null}
+  {"id":1,"name":"Mechanical Baseline","description":"Autofix + test starter modernization","status":"pending","gateStatus":"idle","skills":["modernize-test-starter"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null,"gateDurationSeconds":null,"gateTestsPassed":null,"gateTestsTotal":null,"gateNote":null},
+  {"id":2,"name":"Foundation","description":"manifest.json + Component.js","status":"pending","gateStatus":"idle","skills":["fix-manifest-json","fix-component-async"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null,"gateDurationSeconds":null,"gateTestsPassed":null,"gateTestsTotal":null,"gateNote":null},
+  {"id":3,"name":"Module System & Globals","description":"JS globals, pseudo-modules, cycles, blind spots","status":"pending","gateStatus":"idle","skills":["fix-js-globals","fix-xml-globals","fix-pseudo-modules","fix-cyclic-deps","fix-linter-blind-spots"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null,"gateDurationSeconds":null,"gateTestsPassed":null,"gateTestsTotal":null,"gateNote":null},
+  {"id":4,"name":"Deprecated APIs","description":"Replace deprecated APIs and themes","status":"pending","gateStatus":"idle","skills":["fix-bootstrap-params","fix-library-init","fix-control-renderer","fix-deprecated-controls","fix-partially-deprecated-apis","fix-table-row-mode","fix-xml-native-html","fix-fiori-elements-extensions"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null,"gateDurationSeconds":null,"gateTestsPassed":null,"gateTestsTotal":null,"gateNote":null},
+  {"id":5,"name":"CSP Compliance","description":"Externalize inline scripts","status":"pending","gateStatus":"idle","skills":["fix-csp-compliance"],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null,"gateDurationSeconds":null,"gateTestsPassed":null,"gateTestsTotal":null,"gateNote":null},
+  {"id":6,"name":"Documentation","description":"Write modernization report and issues file","status":"pending","gateStatus":"idle","skills":[],"findingsBefore":null,"findingsAfter":null,"filesChanged":null,"commit":null,"commitMessage":null,"durationSeconds":null,"gateDurationSeconds":null,"gateTestsPassed":null,"gateTestsTotal":null,"gateNote":null}
 ]
 ```
 
-When updating a phase (start/end), carry all fields forward — only change `status`, and fill in `findingsBefore`/`findingsAfter`/`filesChanged`/`commit`/`commitMessage`/`durationSeconds` as they become known.
+When updating a phase (start/end), carry all fields forward — only change `status`, and fill in `findingsBefore`/`findingsAfter`/`filesChanged`/`commit`/`commitMessage`/`durationSeconds` as they become known. Gate fields (`gateStatus`/`gateDurationSeconds`/`gateTestsPassed`/`gateTestsTotal`/`gateNote`) are filled by the Verification Gate step.
 
 ### Step 1.2: Apply Autofix
 
@@ -735,9 +735,10 @@ push_status "{\"status\":\"running\",\"currentPhase\":5,\"currentActivity\":\"Ph
 
 After every phase commit, run the gate matching the mode chosen in Phase 0. **Use 600000ms timeout** for all test commands.
 
-Before starting the gate, set `gateStatus: "running"` on the current phase so the dashboard shows the gate circle:
+Before starting the gate, set `gateStatus: "running"` on the current phase so the dashboard shows the gate circle. Also record the gate start time so the duration can be reported:
 
 ```bash
+GATE_START=$(date +%s)
 PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
 import json, sys
 phases = json.load(sys.stdin)
@@ -749,27 +750,39 @@ print(json.dumps(phases))
 push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Verification gate — tests laufen...\",\"phases\":$PHASES_JSON}"
 ```
 
-After the gate completes, push the result — set `gateStatus` to `"passed"` or `"failed"` (leave `phase.status` unchanged):
+After the gate completes, push the result — set `gateStatus` to `"passed"` or `"failed"` (leave `phase.status` unchanged). Also fill in `gateDurationSeconds` (elapsed since `$GATE_START`) and, when the test runner reports counts, `gateTestsPassed` / `gateTestsTotal`. These drive the gate line in the completed-screen phase summary (e.g. `Gate: 18/18 Tests passed ✅ 3m 04s`). Set `$GATE_PASSED` / `$GATE_TOTAL` from the sub-agent's test summary (`N passed`, `N+M+skipped` total); if the runner reports no counts, leave them unset and the dashboard shows just `Gate passed/failed`.
+
+**When not every test is green, add a short `gateNote` explaining why.** The dashboard colours the gate line by outcome: all green → green ✅; `gateStatus:"passed"` but `gateTestsPassed < gateTestsTotal` → amber ⚠ (the gate was let through, but the user deserves to know which tests were skipped/tolerated and why); `failed` → red ❌. Whenever `gateTestsPassed < gateTestsTotal` (amber or red), set `$GATE_NOTE` to one short sentence — e.g. `"1 Test übersprungen: opaTests/Worklist nicht phasenbezogen"` or `"3 Tests fehlgeschlagen nach IllustratedMessage-Migration"`. When all tests pass, leave `$GATE_NOTE` empty:
 
 ```bash
+GATE_DURATION=$(( $(date +%s) - GATE_START ))
+
 # On pass:
-PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
-import json, sys
+PHASES_JSON=$(echo "$PHASES_JSON" | GATE_DURATION=$GATE_DURATION GATE_PASSED="$GATE_PASSED" GATE_TOTAL="$GATE_TOTAL" GATE_NOTE="$GATE_NOTE" python3 -c "
+import json, sys, os
 phases = json.load(sys.stdin)
 for p in phases:
     if p['id'] == $CURRENT_PHASE:
         p['gateStatus'] = 'passed'
+        p['gateDurationSeconds'] = int(os.environ['GATE_DURATION'])
+        if os.environ.get('GATE_PASSED'): p['gateTestsPassed'] = int(os.environ['GATE_PASSED'])
+        if os.environ.get('GATE_TOTAL'): p['gateTestsTotal'] = int(os.environ['GATE_TOTAL'])
+        if os.environ.get('GATE_NOTE'): p['gateNote'] = os.environ['GATE_NOTE']
 print(json.dumps(phases))
 ")
 push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests bestanden ✅\",\"phases\":$PHASES_JSON}"
 
 # On fail (after retries exhausted):
-PHASES_JSON=$(echo "$PHASES_JSON" | python3 -c "
-import json, sys
+PHASES_JSON=$(echo "$PHASES_JSON" | GATE_DURATION=$GATE_DURATION GATE_PASSED="$GATE_PASSED" GATE_TOTAL="$GATE_TOTAL" GATE_NOTE="$GATE_NOTE" python3 -c "
+import json, sys, os
 phases = json.load(sys.stdin)
 for p in phases:
     if p['id'] == $CURRENT_PHASE:
         p['gateStatus'] = 'failed'
+        p['gateDurationSeconds'] = int(os.environ['GATE_DURATION'])
+        if os.environ.get('GATE_PASSED'): p['gateTestsPassed'] = int(os.environ['GATE_PASSED'])
+        if os.environ.get('GATE_TOTAL'): p['gateTestsTotal'] = int(os.environ['GATE_TOTAL'])
+        if os.environ.get('GATE_NOTE'): p['gateNote'] = os.environ['GATE_NOTE']
 print(json.dumps(phases))
 ")
 push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests fehlgeschlagen ❌ — warte auf Nutzer\",\"phases\":$PHASES_JSON}"
@@ -788,6 +801,8 @@ Sub-agent instructions:
 6. **Scope constraint:** Only fix failing tests caused by current phase. Never apply other-phase modernizations.
 
 After return: ✅ → push completed, proceed. ❌ → push failed, print summary, ask user.
+
+When the sub-agent reports a test count (`N passed`, `M total`), set `GATE_PASSED=N` and `GATE_TOTAL=M` before the pass/fail push so the gate line shows `Gate: N/M Tests passed`. If no counts are available, leave them unset. When `N < M` (some tests skipped, tolerated, or failed), also set `GATE_NOTE` to one short sentence explaining why — this renders an amber (passed-but-not-all) or red (failed) explanation line instead of a misleading green ✅.
 
 ### Half autonomous
 
