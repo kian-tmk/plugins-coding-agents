@@ -299,7 +299,7 @@ body {
 
 .phase-summary-row {
   display: grid;
-  grid-template-columns: 22px 1fr 70px 70px 50px 80px;
+  grid-template-columns: 22px 1fr 70px 70px 76px 80px;
   gap: 8px; align-items: center; padding: 8px 14px;
   border-bottom: 1px solid var(--border); font-size: 12px;
 }
@@ -309,8 +309,30 @@ body {
 .ps-name { color: var(--text); }
 .ps-fixed { color: var(--green); font-weight: 600; }
 .ps-files { color: var(--text-muted); }
-.ps-dur { color: var(--text-muted); font-size: 11px; }
+.ps-dur { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .ps-commit { font-family: monospace; font-size: 11px; color: var(--blue-light); }
+
+.ps-gate-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 14px 8px 44px;
+  border-bottom: 1px solid var(--border); font-size: 11px;
+}
+.ps-gate-row:last-child { border-bottom: none; }
+/* When an explanation follows, gate + note form one block: drop the divider
+   and bottom padding between them so they read as a unit. */
+.ps-gate-row:has(+ .ps-gate-note) { border-bottom: none; padding-bottom: 2px; }
+.ps-gate-label { font-weight: 500; }
+.ps-gate-dur { color: var(--text-muted); font-family: monospace; white-space: nowrap; }
+.ps-gate-pass .ps-gate-label { color: var(--green); }
+.ps-gate-warn .ps-gate-label { color: var(--amber); }
+.ps-gate-fail .ps-gate-label { color: var(--red); }
+.ps-gate-note {
+  padding: 0 14px 8px 44px;
+  font-size: 11px; color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.ps-gate-note.ps-gate-warn { color: var(--amber); }
+.ps-gate-note.ps-gate-fail { color: var(--red); }
 
 .issue-row { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .issue-row:last-child { border-bottom: none; }

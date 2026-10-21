@@ -19,6 +19,10 @@ interface PhaseState {
   description: string;
   status: PhaseStatus;
   gateStatus: GateStatus;
+  gateDurationSeconds: number | null;
+  gateTestsPassed: number | null;
+  gateTestsTotal: number | null;
+  gateNote: string | null;
   findingsBefore: number | null;
   findingsAfter: number | null;
   filesChanged: number | null;
@@ -152,8 +156,12 @@ function formatElapsed(seconds: number): string {
   if (!seconds || isNaN(seconds) || seconds < 0) return "0s";
   const sec = Math.round(seconds);
   if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
+  if (h > 0) {
+    return `${h}h ${m.toString().padStart(2, "0")}m ${s.toString().padStart(2, "0")}s`;
+  }
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
@@ -377,6 +385,40 @@ function renderDashboard(state: ModernizationState) {
   buildPhaseCommits(state.phases, state.gitActivity ?? null);
 }
 
+function renderGateRow(p: PhaseState): string {
+  // Only render when a gate actually ran (manual mode leaves gateStatus idle)
+  if (p.gateStatus !== "passed" && p.gateStatus !== "failed") return "";
+
+  const hasCounts = p.gateTestsTotal != null && p.gateTestsPassed != null;
+  // Three visual states:
+  //  - failed            → red ❌
+  //  - passed, not all    → amber ⚠ (gate green-lit, but some tests didn't pass)
+  //  - passed, all green  → green ✅
+  const partial = p.gateStatus === "passed" && hasCounts
+    && (p.gateTestsPassed as number) < (p.gateTestsTotal as number);
+
+  let cls: string, icon: string, label: string;
+  if (p.gateStatus === "failed") {
+    cls = "ps-gate-fail"; icon = "❌";
+    label = hasCounts ? `Gate: ${p.gateTestsPassed}/${p.gateTestsTotal} passed` : "Gate failed";
+  } else if (partial) {
+    cls = "ps-gate-warn"; icon = "⚠";
+    label = `Gate: ${p.gateTestsPassed}/${p.gateTestsTotal} Tests passed`;
+  } else {
+    cls = "ps-gate-pass"; icon = "✅";
+    label = hasCounts ? `Gate: ${p.gateTestsPassed}/${p.gateTestsTotal} Tests passed` : "Gate passed";
+  }
+
+  const dur = p.gateDurationSeconds != null ? formatElapsed(p.gateDurationSeconds) : "";
+  const noteRow = p.gateNote
+    ? `<div class="ps-gate-note ${cls}">↳ ${escapeHtml(p.gateNote)}</div>`
+    : "";
+  return `<div class="ps-gate-row ${cls}">
+      <span class="ps-gate-label">└ ${label} ${icon}</span>
+      <span class="ps-gate-dur">${dur}</span>
+    </div>${noteRow}`;
+}
+
 function renderCompleted(state: ModernizationState) {
   const elapsedSec = (state.elapsedSeconds && state.elapsedSeconds > 0)
     ? state.elapsedSeconds
@@ -410,7 +452,7 @@ function renderCompleted(state: ModernizationState) {
   phasesEl.innerHTML = state.phases.map((p) => {
     const fixed = (p.findingsBefore ?? 0) - (p.findingsAfter ?? 0);
     const dur = p.durationSeconds != null ? formatElapsed(p.durationSeconds) : "—";
-    return `<div class="phase-summary-row">
+    const row = `<div class="phase-summary-row">
       <span class="ps-num">${p.id}</span>
       <span class="ps-name">${escapeHtml(p.name)}</span>
       <span class="ps-fixed">${fixed > 0 ? `${fixed} fixed` : "—"}</span>
@@ -418,6 +460,7 @@ function renderCompleted(state: ModernizationState) {
       <span class="ps-dur">${dur}</span>
       <span class="ps-commit">${p.commit ?? "—"}</span>
     </div>`;
+    return row + renderGateRow(p);
   }).join("");
 
   // Deferred issues
@@ -484,6 +527,10 @@ function normalizePhase(p: Record<string, unknown>, index: number): PhaseState {
     description: (p.description ?? "") as string,
     status: effectiveStatus,
     gateStatus: (p.gateStatus ?? defaultGate) as GateStatus,
+    gateDurationSeconds: (p.gateDurationSeconds ?? null) as number | null,
+    gateTestsPassed: (p.gateTestsPassed ?? null) as number | null,
+    gateTestsTotal: (p.gateTestsTotal ?? null) as number | null,
+    gateNote: (p.gateNote ?? null) as string | null,
     findingsBefore: (p.findingsBefore ?? null) as number | null,
     findingsAfter: (p.findingsAfter ?? null) as number | null,
     filesChanged: (p.filesChanged ?? null) as number | null,
