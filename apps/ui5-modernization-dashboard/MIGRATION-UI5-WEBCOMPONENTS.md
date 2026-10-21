@@ -1,6 +1,6 @@
 # Plan: Migration des Dashboards zu UI5 Web Components
 
-> Status: **Spike durchgeführt (Phase 0 + 1), Ergebnis GO.** Stand 2026-10-21.
+> Status: **Phase 1 (Completed) + Idle migriert.** Stand 2026-10-21.
 > Betrifft `apps/ui5-modernization-dashboard/` (die MCP-App). Architektur der App:
 > siehe `ARCHITECTURE.md` im selben Verzeichnis.
 >
@@ -26,21 +26,65 @@ Gemessen am Completed-Screen (realistischer Fiori-Nachbau: `ui5-table`, `ui5-tag
 
 **🔴 KRITISCHE REGEL für die echte Migration: NIEMALS `@ui5/webcomponents*/dist/Assets.js`
 importieren.** `Assets.js` registriert *alle* Themes + *alle* i18n-Sprachen, die das
-`viteSingleFile`-Plugin dann komplett inline bündelt → 14 MB. Stattdessen **gezielt nur das
-benötigte Theme-Parameter-Bundle** importieren:
-
-```ts
-import "@ui5/webcomponents/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
-import "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
-```
-
-Das kostet praktisch **0 KB extra** gegenüber dem eingebauten Default-Theme (die Theme-CSS-
-Parameter sind winzig; der Ballast im `Assets.js` ist die i18n/CLDR-Masse). Dark-Mode ist
-damit voll drin. i18n/CLDR nur laden, wenn wirklich gebraucht (hier: nein).
+`viteSingleFile`-Plugin dann komplett inline bündelt → 14 MB. Stattdessen **nur das eine
+benötigte Theme registrieren** — siehe die unten dokumentierte Korrektur (der reine CSS-Import
+genügt NICHT).
 
 Fazit: **+220 KB für die komplette Fiori-UI inkl. Dark-Mode ist vertretbar.** Control-Mapping
 war wie erwartet unkritisch. Der Spike-Probe-Code (Fiori-Variante) kann als Referenz-Pattern
 für den echten `renderCompleted()`-Umbau dienen (Git-Historie / Commit des Spikes).
+
+## 🔧 Korrektur aus der echten Migration (2026-10-21) — Theme-Registrierung
+
+Beim echten Umbau stellte sich die ursprüngliche Spike-Annahme als **falsch** heraus: Der
+bloße Import der `parameters-bundle.css.js` **registriert das Theme nicht** — diese Datei ist
+nur ein CSS-String-Export (`export default \`…\``), kein Seiteneffekt. Folge: UI5 meldete
+*„non-registered theme sap_horizon_dark - falling back to sap_horizon"* und rendert hell.
+
+`Assets.js` funktionierte im Mockup nur, weil es `registerThemePropertiesLoader` für **alle**
+Themes aufruft (genau die 14-MB-Falle). Die richtige, minimale Lösung: **genau ein Theme** für
+die **drei** Theme-tragenden Pakete registrieren, mit Loadern, die die direkt importierten
+CSS-Bundles zurückgeben:
+
+```ts
+import { registerThemePropertiesLoader } from "@ui5/webcomponents-base/dist/asset-registries/Themes.js";
+import { setTheme } from "@ui5/webcomponents-base/dist/config/Theme.js";
+import darkThemingParams from "@ui5/webcomponents-theming/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+import darkBaseParams    from "@ui5/webcomponents/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+import darkFioriParams   from "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+
+registerThemePropertiesLoader("@ui5/webcomponents-theming", "sap_horizon_dark", async () => darkThemingParams);
+registerThemePropertiesLoader("@ui5/webcomponents",         "sap_horizon_dark", async () => darkBaseParams);
+registerThemePropertiesLoader("@ui5/webcomponents-fiori",   "sap_horizon_dark", async () => darkFioriParams);
+setTheme("sap_horizon_dark");
+```
+
+**Wichtig:** `@ui5/webcomponents-theming` trägt die Basis-`sap*`-Design-Tokens (Hintergrund,
+Textfarben) auf `:root` — ohne dieses Paket haben die Controls keine Palette. Die beiden
+Komponenten-Pakete tragen ihre Control-Tokens auf `:host`. Alle drei sind nötig.
+
+Kosten: Die drei Dark-CSS-Bundles werden jetzt real inline gebündelt (als Daten statt als
+side-effect-only Imports tree-geshakt) → der Build wuchs dadurch auf **~1206 KB**. Immer noch
+weit unter der `Assets.js`-Falle (14 MB) und ohne jede i18n/CLDR-Masse.
+
+## 📏 Reale Messung nach echter Migration (2026-10-21) — Completed + Idle
+
+Nach der echten Migration von **Completed + Idle** in der vollständigen App (inkl. `marked`,
+MCP-ext-apps-SDK, unverändertem Dashboard/Stepper-Code) misst `dist/mcp-app.html`:
+
+| Stand | Größe | Delta vs. Baseline |
+|---|---|---|
+| Baseline (vor Migration) | 310 KB | — |
+| **Completed + Idle migriert** | **~1206 KB** | **+896 KB (≈ 3,9×)** |
+
+**Divergenz zum Spike:** Der Spike (+220 KB) war ein *isolierter* Completed-Nachbau ohne
+`marked`, ohne MCP-SDK, ohne den übrigen Dashboard-Code **und** hatte die Theme-Registrierung
+via `Assets.js` gelöst (im Mockup unkritisch, da Browser-only). Die reale, single-file-taugliche
+Lösung registriert die drei Dark-CSS-Bundles explizit (s. Korrektur oben) — das ist der Haupt-
+Unterschied zur Schätzung. Isoliert kosten `ui5-illustrated-message` + die `Achievement`-
+Illustration ~156 KB. **Entscheidung (2026-10-21): akzeptiert** — ~1,2 MB inline wird
+mitgenommen. Bei weiteren Phasen die Zahl im Auge behalten; die Illustration ist der erste
+Streichkandidat.
 
 
 
@@ -59,7 +103,7 @@ für den echten `renderCompleted()`-Umbau dienen (Git-Historie / Commit des Spik
 3. „Akzeptabel" definieren (z. B. „< X KB inline") als explizites Spike-Abbruchkriterium.
    **Noch zu entscheiden: die harte Zahl X.**
 
-## Phase 1 — Spike: nur der Completed-Screen (Go/No-Go)
+## Phase 1 — Spike: nur der Completed-Screen (Go/No-Go) — ✅ erledigt (+ Idle)
 
 Warum Completed zuerst: statisch (abgeschlossene Daten, keine Live-Timer, kein Polling-
 Zustand), optisch abgegrenzt, nutzt repräsentativ die wichtigsten Control-Typen. Ideal, um

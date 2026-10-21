@@ -38,23 +38,17 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  gap: 12px;
+  gap: 16px;
   padding: 32px;
   text-align: center;
 }
-.idle-icon { font-size: 48px; color: var(--blue-light); }
-.idle-title { font-size: 22px; font-weight: 700; }
-.idle-sub { color: var(--text-muted); max-width: 320px; }
-.idle-hint { color: var(--text-muted); max-width: 360px; font-size: 12px; margin-top: 4px; }
-.idle-dots span {
-  animation: idle-dot-blink 1.4s ease-in-out infinite;
-  opacity: 0;
-}
-.idle-dots span:nth-child(2) { animation-delay: 0.2s; }
-.idle-dots span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes idle-dot-blink {
-  0%, 80%, 100% { opacity: 0; }
-  40% { opacity: 1; }
+.idle-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  max-width: 360px;
+  font-size: 12px;
 }
 
 /* ── Buttons ── */
@@ -276,97 +270,45 @@ body {
 .completed-wrap > * { flex-shrink: 0; }
 
 .completed-header { display: flex; align-items: center; gap: 14px; }
-.completed-icon { font-size: 36px; flex-shrink: 0; }
+.completed-icon { color: var(--green); flex-shrink: 0; }
+.completed-icon::part(root) { width: 2.2rem; height: 2.2rem; }
 .completed-title { font-size: 18px; font-weight: 700; }
 .completed-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
 
 .completed-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.completed-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.completed-stat-inner { padding: 12px; }
 .completed-stat-value { font-size: 22px; font-weight: 700; }
+.completed-stat-value.positive { color: var(--green); }
 .completed-stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 
-.completed-section {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
-}
-.completed-section-title {
-  padding: 10px 14px; font-size: 12px; font-weight: 600;
-  border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px;
-}
-.issues-count {
-  background: var(--amber); color: #000; border-radius: 10px;
-  padding: 1px 7px; font-size: 10px; font-weight: 700;
-}
+/* ui5-card provides the surface/border/radius for completed sections now. */
+.completed-section { display: block; }
 
-.phase-summary-row {
-  display: grid;
-  grid-template-columns: 22px 1fr 70px 70px 76px 80px;
-  gap: 8px; align-items: center; padding: 8px 14px;
-  border-bottom: 1px solid var(--border); font-size: 12px;
-}
-.phase-summary-row:last-child { border-bottom: none; }
-.phase-summary-row:hover { background: var(--surface-2); }
-.ps-num { color: var(--text-muted); font-weight: 600; }
-.ps-name { color: var(--text); }
-.ps-fixed { color: var(--green); font-weight: 600; }
-.ps-files { color: var(--text-muted); }
-.ps-dur { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
-.ps-commit { font-family: monospace; font-size: 11px; color: var(--blue-light); }
+/* Phase summary table cell content */
+.phase-table .fixed { color: var(--green); font-weight: 600; }
+.phase-table .hash { font-family: monospace; color: var(--blue-light); }
+.phase-table .muted { color: var(--text-muted); }
 
-.ps-gate-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 14px 8px 44px;
-  border-bottom: 1px solid var(--border); font-size: 11px;
-}
-.ps-gate-row:last-child { border-bottom: none; }
-/* When an explanation follows, gate + note form one block: drop the divider
-   and bottom padding between them so they read as a unit. */
-.ps-gate-row:has(+ .ps-gate-note) { border-bottom: none; padding-bottom: 2px; }
-.ps-gate-label { font-weight: 500; }
-.ps-gate-dur { color: var(--text-muted); font-family: monospace; white-space: nowrap; }
+/* Gate detail row (an extra table row below its phase) */
+.ps-gate-row .ps-gate-label { font-weight: 500; font-size: 12px; }
+.ps-gate-row .ps-gate-dur { color: var(--text-muted); font-family: monospace; white-space: nowrap; }
 .ps-gate-pass .ps-gate-label { color: var(--green); }
 .ps-gate-warn .ps-gate-label { color: var(--amber); }
 .ps-gate-fail .ps-gate-label { color: var(--red); }
 .ps-gate-note {
-  padding: 0 14px 8px 44px;
-  font-size: 11px; color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  margin-top: 2px; font-size: 11px; color: var(--text-muted);
 }
-.ps-gate-note.ps-gate-warn { color: var(--amber); }
-.ps-gate-note.ps-gate-fail { color: var(--red); }
 
+.issues-body { padding: 4px 0; }
 .issue-row { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .issue-row:last-child { border-bottom: none; }
-.issue-file { font-family: monospace; font-size: 11px; color: var(--blue-light); margin-bottom: 2px; }
-.issue-rule {
-  display: inline-block; background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 4px; padding: 1px 6px; font-size: 10px; color: var(--amber); margin-bottom: 4px;
-}
-.issue-msg { color: var(--text); margin-bottom: 3px; }
+.issue-file { font-family: monospace; font-size: 11px; color: var(--blue-light); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.issue-file ui5-icon { width: 0.9rem; height: 0.9rem; }
+.issue-msg { color: var(--text); margin: 4px 0 3px; }
 .issue-reason { color: var(--text-muted); font-size: 11px; }
 
 .completed-links { display: flex; gap: 10px; }
-.completed-link-wrap {
-  flex: 1; display: flex; align-items: stretch;
-  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
-}
-.completed-link {
-  flex: 1; display: flex; align-items: center; gap: 8px;
-  padding: 12px 14px; background: var(--surface); border: none; border-radius: 0;
-  text-decoration: none; color: var(--text); font-size: 12px;
-  transition: background 0.15s; cursor: pointer;
-}
-.completed-link:hover { background: var(--surface-2); }
-.completed-link-wrap:hover { border-color: var(--blue); }
-.completed-link-icon { font-size: 18px; }
-.completed-link-label { font-weight: 600; }
-.completed-link-sub { color: var(--text-muted); font-size: 11px; }
-.completed-link-download {
-  display: flex; align-items: center; justify-content: center;
-  padding: 0 12px; background: var(--surface); border-left: 1px solid var(--border);
-  color: var(--text-muted); font-size: 13px; text-decoration: none;
-  transition: background 0.15s, color 0.15s; cursor: pointer;
-}
-.completed-link-download:hover { background: var(--surface-2); color: var(--text); }
+.completed-links .link-card { flex: 1; }
 
 /* ── Markdown overlay ── */
 .md-overlay {

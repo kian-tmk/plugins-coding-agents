@@ -197,6 +197,22 @@ erst gebaut werden. Laufzeit-Deps (für den Server): express, cors, marked, zod,
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
+### 2026-10-21 — Completed- & Idle-Screen auf UI5 Web Components migriert
+- Erste echte Migrationsphase (Plan `MIGRATION-UI5-WEBCOMPONENTS.md`, Phase 1 + Idle):
+  Completed- und Idle-Screen nutzen jetzt echte UI5 Web Components
+  (`ui5-card`, `ui5-table`, `ui5-tag`, `ui5-illustrated-message`, `ui5-busy-indicator`,
+  `ui5-list`/`ui5-li`, `ui5-icon`). Dashboard/Running-Screen inkl. Stepper **unverändert**.
+- **🔴 Bundle-Regel umgesetzt:** gezielte Imports, **kein** `Assets.js`. Theme-Registrierung
+  korrigiert: der reine CSS-Import registriert das Theme NICHT — stattdessen
+  `registerThemePropertiesLoader` für die drei Theme-Pakete (`-theming`, core, `-fiori`) auf
+  `sap_horizon_dark`, dann `setTheme`. Details im Migrationsplan.
+- Gemessene Bundle-Größe: `dist/mcp-app.html` **~1206 KB** (Baseline 310 KB). Divergenz zur
+  Spike-Schätzung dokumentiert und bewusst akzeptiert (s. Migrationsplan).
+- Phase-Summary ist jetzt eine echte `ui5-table`; die Zeilen (inkl. der Gate-Detailzeilen)
+  werden als direkte `ui5-table-row`-Kinder injiziert — die Header-Row bleibt erhalten. Die
+  3-Zustands-Gate-Logik (grün/amber/rot + `gateNote`) ist unverändert.
+- Visuell verifiziert im Standalone-Browser (Completed + Idle, Dark-Theme, keine Konsolenfehler).
+
 ### 2026-10-21 — Stunden-Timer, Drei-Zustands-Gate, Architektur-Doku
 - Alle Timer zeigen jetzt Stunden (`Xh Ym Zs` ab 1 h) über die zentrale
   `formatElapsed`-Funktion — wirkt in Elapsed-, Phasen-, Stepper-, Phase-Summary-

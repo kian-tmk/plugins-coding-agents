@@ -8,6 +8,50 @@ import {
 import { marked } from "marked";
 import "./mcp-app.css";
 
+// ── UI5 Web Components ─────────────────────────────────────────────────────────
+// 🔴 CRITICAL: never import "@ui5/webcomponents*/dist/Assets.js" — it registers ALL
+// themes + ALL i18n/CLDR and the single-file build then inlines the lot (~14 MB).
+// Instead register ONLY the sap_horizon_dark theme, for each of the three packages
+// that ship theme parameters, using the raw CSS bundles we import directly. This is
+// the minimal registration — one theme, no i18n/CLDR. See MIGRATION-UI5-WEBCOMPONENTS.md.
+import { registerThemePropertiesLoader } from "@ui5/webcomponents-base/dist/asset-registries/Themes.js";
+import { setTheme } from "@ui5/webcomponents-base/dist/config/Theme.js";
+import darkThemingParams from "@ui5/webcomponents-theming/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+import darkBaseParams from "@ui5/webcomponents/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+import darkFioriParams from "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+
+// The theming package carries the base sap* design tokens on :root; the component
+// packages carry their control tokens on :host.
+registerThemePropertiesLoader("@ui5/webcomponents-theming", "sap_horizon_dark", async () => darkThemingParams);
+registerThemePropertiesLoader("@ui5/webcomponents", "sap_horizon_dark", async () => darkBaseParams);
+registerThemePropertiesLoader("@ui5/webcomponents-fiori", "sap_horizon_dark", async () => darkFioriParams);
+
+import "@ui5/webcomponents/dist/Card.js";
+import "@ui5/webcomponents/dist/CardHeader.js";
+import "@ui5/webcomponents/dist/Button.js";
+import "@ui5/webcomponents/dist/Tag.js";
+import "@ui5/webcomponents/dist/Title.js";
+import "@ui5/webcomponents/dist/Icon.js";
+import "@ui5/webcomponents/dist/BusyIndicator.js";
+import "@ui5/webcomponents/dist/List.js";
+import "@ui5/webcomponents/dist/ListItemStandard.js";
+import "@ui5/webcomponents/dist/Table.js";
+import "@ui5/webcomponents/dist/TableHeaderRow.js";
+import "@ui5/webcomponents/dist/TableHeaderCell.js";
+import "@ui5/webcomponents/dist/TableRow.js";
+import "@ui5/webcomponents/dist/TableCell.js";
+import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/Achievement.js";
+import "@ui5/webcomponents-icons/dist/sys-enter-2.js";
+import "@ui5/webcomponents-icons/dist/document.js";
+import "@ui5/webcomponents-icons/dist/document-text.js";
+import "@ui5/webcomponents-icons/dist/alert.js";
+
+// The dashboard is dark-only today (hard-coded dark palette in mcp-app.css).
+// Match that with the UI5 dark theme. Full light/dark host-context bridge is a
+// later migration phase (see plan Phase 2).
+setTheme("sap_horizon_dark");
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type PhaseStatus = "pending" | "running" | "testing" | "completed" | "failed";
@@ -410,13 +454,19 @@ function renderGateRow(p: PhaseState): string {
   }
 
   const dur = p.gateDurationSeconds != null ? formatElapsed(p.gateDurationSeconds) : "";
-  const noteRow = p.gateNote
-    ? `<div class="ps-gate-note ${cls}">↳ ${escapeHtml(p.gateNote)}</div>`
+  const note = p.gateNote
+    ? `<div class="ps-gate-note">↳ ${escapeHtml(p.gateNote)}</div>`
     : "";
-  return `<div class="ps-gate-row ${cls}">
-      <span class="ps-gate-label">└ ${label} ${icon}</span>
-      <span class="ps-gate-dur">${dur}</span>
-    </div>${noteRow}`;
+  // Gate detail as its own table row: empty #, gate label in the Phase column
+  // (spanning visually via styling), duration in the Duration column.
+  return `<ui5-table-row class="ps-gate-row ${cls}">
+      <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell><span class="ps-gate-label">└ ${label} ${icon}</span>${note}</ui5-table-cell>
+      <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell><span class="ps-gate-dur">${dur}</span></ui5-table-cell>
+      <ui5-table-cell></ui5-table-cell>
+    </ui5-table-row>`;
 }
 
 function renderCompleted(state: ModernizationState) {
@@ -434,34 +484,43 @@ function renderCompleted(state: ModernizationState) {
   // Stats
   const statsEl = document.getElementById("completed-stats")!;
   statsEl.innerHTML = `
-    <div class="completed-stat">
-      <div class="completed-stat-value" style="color:var(--green)">${state.linterBaseline}</div>
-      <div class="completed-stat-label">findings resolved</div>
-    </div>
-    <div class="completed-stat">
-      <div class="completed-stat-value">${totalFiles}</div>
-      <div class="completed-stat-label">files changed</div>
-    </div>
-    <div class="completed-stat">
-      <div class="completed-stat-value">${commits}</div>
-      <div class="completed-stat-label">commits</div>
-    </div>`;
+    <ui5-card class="completed-stat">
+      <div class="completed-stat-inner">
+        <div class="completed-stat-value positive">${state.linterBaseline}</div>
+        <div class="completed-stat-label">findings resolved</div>
+      </div>
+    </ui5-card>
+    <ui5-card class="completed-stat">
+      <div class="completed-stat-inner">
+        <div class="completed-stat-value">${totalFiles}</div>
+        <div class="completed-stat-label">files changed</div>
+      </div>
+    </ui5-card>
+    <ui5-card class="completed-stat">
+      <div class="completed-stat-inner">
+        <div class="completed-stat-value">${commits}</div>
+        <div class="completed-stat-label">commits</div>
+      </div>
+    </ui5-card>`;
 
-  // Phase summary
+  // Phase summary (rows injected into the <ui5-table> declared in the HTML shell;
+  // keep the slot="headerRow" child, replace only the body rows)
   const phasesEl = document.getElementById("completed-phases")!;
-  phasesEl.innerHTML = state.phases.map((p) => {
+  phasesEl.querySelectorAll("ui5-table-row").forEach((r) => r.remove());
+  const rowsHtml = state.phases.map((p) => {
     const fixed = (p.findingsBefore ?? 0) - (p.findingsAfter ?? 0);
     const dur = p.durationSeconds != null ? formatElapsed(p.durationSeconds) : "—";
-    const row = `<div class="phase-summary-row">
-      <span class="ps-num">${p.id}</span>
-      <span class="ps-name">${escapeHtml(p.name)}</span>
-      <span class="ps-fixed">${fixed > 0 ? `${fixed} fixed` : "—"}</span>
-      <span class="ps-files">${p.filesChanged != null ? `${p.filesChanged} files` : "—"}</span>
-      <span class="ps-dur">${dur}</span>
-      <span class="ps-commit">${p.commit ?? "—"}</span>
-    </div>`;
+    const row = `<ui5-table-row>
+      <ui5-table-cell>${p.id}</ui5-table-cell>
+      <ui5-table-cell>${escapeHtml(p.name)}</ui5-table-cell>
+      <ui5-table-cell>${fixed > 0 ? `<span class="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${p.filesChanged != null ? `${p.filesChanged} files` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${dur}</ui5-table-cell>
+      <ui5-table-cell>${p.commit ? `<span class="hash">${escapeHtml(p.commit)}</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+    </ui5-table-row>`;
     return row + renderGateRow(p);
   }).join("");
+  phasesEl.insertAdjacentHTML("beforeend", rowsHtml);
 
   // Deferred issues
   const issues = state.deferredIssues ?? [];
@@ -472,8 +531,8 @@ function renderCompleted(state: ModernizationState) {
     const issuesEl = document.getElementById("completed-issues")!;
     issuesEl.innerHTML = issues.map((issue) => `
       <div class="issue-row">
-        <div class="issue-file">${escapeHtml(issue.file)}</div>
-        <span class="issue-rule">${escapeHtml(issue.rule)}</span>
+        <div class="issue-file"><ui5-icon name="document"></ui5-icon> ${escapeHtml(issue.file)}</div>
+        <ui5-tag design="Critical" hide-state-icon>${escapeHtml(issue.rule)}</ui5-tag>
         <div class="issue-msg">${escapeHtml(issue.message)}</div>
         <div class="issue-reason">↳ ${escapeHtml(issue.reason)}</div>
       </div>`).join("");
@@ -486,29 +545,30 @@ function renderCompleted(state: ModernizationState) {
 
   function linkCard(filePath: string, title: string, icon: string, sub: string) {
     const reportFile = filePath.split("/").pop() ?? "";
-    const downloadAttr = standaloneMode
-      ? `<a class="completed-link-download" href="http://localhost:3001/files/${encodeURIComponent(reportFile)}" download="${escapeHtml(reportFile)}" title="Download">⬇</a>`
+    const download = standaloneMode
+      ? `http://localhost:3001/files/${encodeURIComponent(reportFile)}`
       : "";
     return `
-    <div class="completed-link-wrap">
-      <button class="completed-link" data-path="${escapeHtml(filePath)}" data-title="${escapeHtml(title)}">
-        <span class="completed-link-icon">${icon}</span>
-        <div>
-          <div class="completed-link-label">${escapeHtml(title)}</div>
-          <div class="completed-link-sub">${sub}</div>
-        </div>
-      </button>${downloadAttr}
-    </div>`;
+    <ui5-card class="link-card">
+      <ui5-li
+        icon="${icon}"
+        description="${escapeHtml(sub)}"
+        data-path="${escapeHtml(filePath)}"
+        data-title="${escapeHtml(title)}"
+        ${download ? `data-download="${escapeHtml(download)}" additional-text="⬇"` : ""}>
+        ${escapeHtml(title)}
+      </ui5-li>
+    </ui5-card>`;
   }
 
   linksEl.innerHTML =
-    linkCard(state.reportPath, "MODERNIZATION-REPORT.md", "📄", "Full phase breakdown &amp; statistics") +
-    linkCard(state.issuesPath, "MODERNIZATION-ISSUES.md", "⚠", `${issues.length} deferred finding${issues.length !== 1 ? "s" : ""} for manual review`);
+    linkCard(state.reportPath, "MODERNIZATION-REPORT.md", "document-text", "Full phase breakdown & statistics") +
+    linkCard(state.issuesPath, "MODERNIZATION-ISSUES.md", "alert", `${issues.length} deferred finding${issues.length !== 1 ? "s" : ""} for manual review`);
 
-  linksEl.querySelectorAll<HTMLButtonElement>(".completed-link[data-path]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const p = btn.dataset.path ?? "";
-      const t = btn.dataset.title ?? "File";
+  linksEl.querySelectorAll<HTMLElement>("ui5-li[data-path]").forEach((li) => {
+    li.addEventListener("click", () => {
+      const p = li.dataset.path ?? "";
+      const t = li.dataset.title ?? "File";
       openMarkdown(p, t);
     });
   });

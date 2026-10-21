@@ -12,10 +12,15 @@
       <!-- ═══ IDLE SCREEN ═══ -->
       <div id="screen-idle" class="screen">
         <div class="idle-wrap">
-          <div class="idle-icon">⬡</div>
-          <h1 class="idle-title">UI5 Modernization</h1>
-          <p class="idle-sub" id="idle-sub">Bereit für die Modernisierung</p>
-          <p class="idle-hint">Starte den Agenten in deinem Projekt — das Dashboard verbindet sich automatisch<span class="idle-dots"><span>.</span><span>.</span><span>.</span></span></p>
+          <ui5-illustrated-message
+            name="Achievement"
+            title-text="UI5 Modernization"
+            subtitle-text="Bereit für die Modernisierung">
+          </ui5-illustrated-message>
+          <div class="idle-hint">
+            <ui5-busy-indicator active size="S" delay="0"></ui5-busy-indicator>
+            <span>Starte den Agenten in deinem Projekt — das Dashboard verbindet sich automatisch …</span>
+          </div>
         </div>
       </div>
 
@@ -138,7 +143,7 @@
 
           <!-- Title -->
           <div class="completed-header">
-            <div class="completed-icon">✅</div>
+            <ui5-icon name="sys-enter-2" class="completed-icon"></ui5-icon>
             <div>
               <h2 class="completed-title">Modernization Complete</h2>
               <p class="completed-sub" id="completed-sub">—</p>
@@ -149,19 +154,27 @@
           <div class="completed-stats" id="completed-stats"></div>
 
           <!-- Phase summary table -->
-          <div class="completed-section">
-            <div class="completed-section-title">Phase summary</div>
-            <div id="completed-phases"></div>
-          </div>
+          <ui5-card class="completed-section">
+            <ui5-card-header title-text="Phase summary"></ui5-card-header>
+            <ui5-table class="phase-table" id="completed-phases">
+              <ui5-table-header-row slot="headerRow">
+                <ui5-table-header-cell width="3rem">#</ui5-table-header-cell>
+                <ui5-table-header-cell>Phase</ui5-table-header-cell>
+                <ui5-table-header-cell>Fixed</ui5-table-header-cell>
+                <ui5-table-header-cell>Files</ui5-table-header-cell>
+                <ui5-table-header-cell>Duration</ui5-table-header-cell>
+                <ui5-table-header-cell>Commit</ui5-table-header-cell>
+              </ui5-table-header-row>
+            </ui5-table>
+          </ui5-card>
 
           <!-- Deferred issues -->
-          <div class="completed-section" id="section-issues" style="display:none">
-            <div class="completed-section-title">
-              ⚠ Deferred for manual review
-              <span class="issues-count" id="issues-count"></span>
-            </div>
-            <div id="completed-issues"></div>
-          </div>
+          <ui5-card class="completed-section" id="section-issues" style="display:none">
+            <ui5-card-header title-text="Deferred for manual review">
+              <ui5-tag slot="action" design="Critical" id="issues-count"></ui5-tag>
+            </ui5-card-header>
+            <div class="issues-body" id="completed-issues"></div>
+          </ui5-card>
 
           <!-- Links -->
           <div class="completed-links" id="completed-links"></div>
