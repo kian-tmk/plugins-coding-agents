@@ -1,6 +1,6 @@
 # Plan: Migration des Dashboards zu UI5 Web Components
 
-> Status: **geplant, noch nicht begonnen.** Stand 2026-10-21.
+> Status: **Spike durchgeführt (Phase 0 + 1), Ergebnis GO.** Stand 2026-10-21.
 > Betrifft `apps/ui5-modernization-dashboard/` (die MCP-App). Architektur der App:
 > siehe `ARCHITECTURE.md` im selben Verzeichnis.
 >
@@ -12,6 +12,37 @@
 > **Der Knackpunkt ist nicht das Control-Mapping** (fast 1:1), **sondern die Bundle-Größe**
 > einer inline-gebündelten Single-File-MCP-App und die **Theming-Kollision mit dem Host**
 > (Claude Desktop liefert eigenes Theme/Style-Variablen).
+
+## ⭐ Spike-Ergebnis (2026-10-21) — GO, mit einer kritischen Regel
+
+Gemessen am Completed-Screen (realistischer Fiori-Nachbau: `ui5-table`, `ui5-tag`-Gates,
+`ui5-card`, `ui5-panel`, `ui5-illustrated-message`, `ui5-button`), minified Single-File-Build:
+
+| Variante | Größe | Delta | Faktor |
+|---|---|---|---|
+| Baseline (Custom-UI heute) | 310 KB | — | 1,0× |
+| **UI5-Controls + gezieltes Dark-Theme** | **530 KB** | **+220 KB** | **1,7× → GO** |
+| UI5-Controls + volles `Assets.js` | **14.111 KB** | +13.801 KB | 45× → No-Go |
+
+**🔴 KRITISCHE REGEL für die echte Migration: NIEMALS `@ui5/webcomponents*/dist/Assets.js`
+importieren.** `Assets.js` registriert *alle* Themes + *alle* i18n-Sprachen, die das
+`viteSingleFile`-Plugin dann komplett inline bündelt → 14 MB. Stattdessen **gezielt nur das
+benötigte Theme-Parameter-Bundle** importieren:
+
+```ts
+import "@ui5/webcomponents/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+import "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+```
+
+Das kostet praktisch **0 KB extra** gegenüber dem eingebauten Default-Theme (die Theme-CSS-
+Parameter sind winzig; der Ballast im `Assets.js` ist die i18n/CLDR-Masse). Dark-Mode ist
+damit voll drin. i18n/CLDR nur laden, wenn wirklich gebraucht (hier: nein).
+
+Fazit: **+220 KB für die komplette Fiori-UI inkl. Dark-Mode ist vertretbar.** Control-Mapping
+war wie erwartet unkritisch. Der Spike-Probe-Code (Fiori-Variante) kann als Referenz-Pattern
+für den echten `renderCompleted()`-Umbau dienen (Git-Historie / Commit des Spikes).
+
+
 
 ## Gemessene Baseline (Phase 0, Teil 1 — bereits erledigt)
 
