@@ -82,8 +82,25 @@ Ergebnis: belastbare Zahl + ein real migrierter Screen als Referenz-Pattern für
 
 ## Phase 2 — Theming-Bridge (erst wenn Spike grün)
 
-1. UI5-Theme initial setzen und bei Host-Kontext-Änderung mitführen: in `handleHostContext`
-   (**mcp-app.ts:108**) Host-Theme auf `setTheme("sap_horizon"|"sap_horizon_dark")` mappen.
+> **Theming-Strategie geklärt (2026-10-21, aus dem ext-apps-SDK verifiziert):**
+> Der MCP-Host (Claude Desktop/claude.ai) liefert zwei unabhängige, **opt-in** Kanäle und
+> erzwingt **kein** CSS im iframe:
+> - `ctx.theme` = binäres `"light"|"dark"` (robust, immer verlässlich). `applyDocumentTheme`
+>   setzt daraus `data-theme` + `color-scheme` auf `<html>`.
+> - `ctx.styles.variables` = optionale semantische CSS-Palette (~80 Properties wie
+>   `--color-background-primary`); **kann komplett fehlen** → nicht als alleinige Quelle nutzen.
+>
+> **Entscheidung: binäres `theme` → UI5-`setTheme` als vollständige Lösung.** UI5 bringt mit
+> `sap_horizon`/`sap_horizon_dark` ein konsistentes Palettensystem mit; die Host-Variablen
+> werden NICHT gebraucht (optionales Fine-Tuning später, Kür). Heute ignoriert das Dashboard
+> das Host-Theme faktisch (hartcodierte Dark-Farben in `mcp-app.css`, keine `data-theme`-
+> Reaktion) → die Migration macht Light/Dark erstmals korrekt.
+
+1. In `handleHostContext` (**mcp-app.ts:108**) mappen:
+   `setTheme(ctx.theme === "dark" ? "sap_horizon_dark" : "sap_horizon")`. Auf
+   `onhostcontextchanged` erneut rufen (Live-Wechsel; App hört dort bereits).
+   **Beide** Themes gezielt importieren (NICHT `Assets.js`):
+   `.../themes/sap_horizon/parameters-bundle.css.js` **und** `.../sap_horizon_dark/...`.
 2. Compact-Density aktivieren (Klasse auf `#app`), Inline-Höhen nachziehen.
 3. Prüfen, welche Custom-Tokens in `mcp-app.css` entfallen können (Farb-Tokens weg,
    Layout-Tokens bleiben), aufräumen.
