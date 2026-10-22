@@ -58,21 +58,7 @@ body {
   font-size: 10px;
 }
 
-/* ── Buttons ── */
-.btn-primary {
-  background: var(--blue);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius);
-  padding: 10px 24px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  margin-top: 8px;
-  transition: background 0.15s;
-}
-.btn-primary:hover { background: var(--blue-light); }
-
+/* ── Buttons (markdown overlay only) ── */
 .btn-ghost {
   background: transparent;
   border: 1px solid var(--border);
@@ -86,20 +72,8 @@ body {
 .btn-ghost:hover { background: var(--surface-2); }
 
 /* ── Header ── */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.header-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-}
-.header-icon { font-size: 18px; color: var(--blue-light); }
-.header-actions { display: flex; gap: 8px; }
+.dashboard-header { --_ui5-bar-root-border-bottom: none; }
+.dashboard-header .header-icon { font-size: 18px; color: var(--sapInformativeColor, var(--blue-light)); }
 
 /* ── Dashboard / Running screen ── */
 #screen-dashboard {
@@ -108,12 +82,11 @@ body {
 }
 
 /* Preflight strip */
+.preflight-card { width: 100%; }
+.preflight-card::part(root) { border-radius: var(--sapElement_BorderCornerRadius, var(--radius)); overflow: hidden; }
 .preflight {
   display: flex;
   align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   padding: 10px 16px;
   flex-wrap: wrap;
   gap: 8px 0;
@@ -125,21 +98,20 @@ body {
   padding: 0 14px;
 }
 .preflight-item:first-child { padding-left: 0; }
-.preflight-sep { width: 1px; height: 28px; background: var(--border); }
-.preflight-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.preflight-sep { width: 1px; height: 28px; background: var(--sapGroup_TitleBorderColor, var(--border)); }
+.preflight-label { font-size: 10px; color: var(--sapContent_LabelColor, var(--text-muted)); text-transform: uppercase; letter-spacing: 0.4px; }
 .preflight-value { font-size: 12px; font-weight: 600; }
-.preflight-clean { color: var(--green); }
-.preflight-warn { color: var(--amber); }
+.preflight-clean { color: var(--sapPositiveColor, var(--green)); }
+.preflight-warn { color: var(--sapCriticalColor, var(--amber)); }
 
 /* Stepper */
+.stepper-card { width: 100%; }
+.stepper-card::part(root) { border-radius: var(--sapElement_BorderCornerRadius, var(--radius)); overflow: hidden; }
 .stepper {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   padding: 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
 }
 .step { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 0 0 auto; }
 .step-circle {
@@ -147,34 +119,34 @@ body {
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600;
-  border: 2px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text-muted);
+  border: 2px solid var(--sapGroup_TitleBorderColor, var(--border));
+  background: var(--sapBackgroundColor, var(--surface-2));
+  color: var(--sapContent_LabelColor, var(--text-muted));
 }
-.step.completed .step-circle { background: var(--green); border-color: var(--green); color: #000; }
-.step.failed .step-circle { background: var(--red); border-color: var(--red); color: #fff; }
+.step.completed .step-circle { background: var(--sapPositiveColor); border-color: var(--sapPositiveColor); color: #000; }
+.step.failed .step-circle { background: var(--sapNegativeColor); border-color: var(--sapNegativeColor); color: #fff; }
 .step.testing .step-circle {
-  background: var(--amber); border-color: var(--amber); color: #000;
+  background: var(--sapCriticalColor); border-color: var(--sapCriticalColor); color: #000;
   animation: step-pulse-amber 1.6s ease-in-out infinite;
 }
 .step.running .step-circle {
-  background: var(--blue); border-color: var(--blue-light); color: #fff;
+  background: var(--sapInformativeColor); border-color: var(--sapInformativeColor); color: #fff;
   animation: step-pulse 1.6s ease-in-out infinite;
 }
-.step.active .step-circle { background: var(--blue); border-color: var(--blue); color: #fff; }
+.step.active .step-circle { background: var(--sapInformativeColor); border-color: var(--sapInformativeColor); color: #fff; }
 
 .step-gate-circle { width: 22px !important; height: 22px !important; font-size: 10px !important; }
 .step.step-gate { padding-top: 4px; }
 .step-gate .step-label { font-size: 9px; }
 .step.step-gate.gate-running .step-gate-circle {
-  background: var(--amber); border-color: var(--amber); color: #000;
+  background: var(--sapCriticalColor); border-color: var(--sapCriticalColor); color: #000;
   animation: step-pulse-amber 1.6s ease-in-out infinite;
 }
-.step.step-gate.gate-passed .step-gate-circle { background: var(--green); border-color: var(--green); color: #000; }
-.step.step-gate.gate-failed .step-gate-circle { background: var(--red); border-color: var(--red); color: #fff; }
-.step.step-gate.gate-running .step-label { color: var(--amber); font-weight: 500; }
-.step.step-gate.gate-passed .step-label { color: var(--green); }
-.step.step-gate.gate-failed .step-label { color: var(--red); font-weight: 500; }
+.step.step-gate.gate-passed .step-gate-circle { background: var(--sapPositiveColor); border-color: var(--sapPositiveColor); color: #000; }
+.step.step-gate.gate-failed .step-gate-circle { background: var(--sapNegativeColor); border-color: var(--sapNegativeColor); color: #fff; }
+.step.step-gate.gate-running .step-label { color: var(--sapCriticalColor); font-weight: 500; }
+.step.step-gate.gate-passed .step-label { color: var(--sapPositiveColor); }
+.step.step-gate.gate-failed .step-label { color: var(--sapNegativeColor); font-weight: 500; }
 
 .step-connector-short { flex: 0.3 0.3 0% !important; min-width: 6px !important; margin-top: 15px !important; }
 @keyframes step-pulse {
@@ -185,68 +157,57 @@ body {
   0%, 100% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0); }
   50%       { box-shadow: 0 0 0 7px rgba(210, 153, 34, 0.35); }
 }
-.step-label { font-size: 10px; text-align: center; color: var(--text-muted); max-width: 75px; line-height: 1.3; }
+.step-label { font-size: 10px; text-align: center; color: var(--sapContent_LabelColor, var(--text-muted)); max-width: 75px; line-height: 1.3; }
 .step.active .step-label,
-.step.running .step-label { color: var(--blue-light); font-weight: 500; }
-.step.testing .step-label { color: var(--amber); font-weight: 500; }
-.step.completed .step-label { color: var(--text); }
-.step.failed .step-label { color: var(--red); font-weight: 500; }
+.step.running .step-label { color: var(--sapInformativeColor, var(--blue-light)); font-weight: 500; }
+.step.testing .step-label { color: var(--sapCriticalColor, var(--amber)); font-weight: 500; }
+.step.completed .step-label { color: var(--sapTextColor, var(--text)); }
+.step.failed .step-label { color: var(--sapNegativeColor, var(--red)); font-weight: 500; }
 .step-duration { font-size: 9px; text-align: center; opacity: 0.9; margin-top: 1px; }
-.step-connector { flex: 1; height: 2px; background: var(--border); margin-top: 14px; min-width: 12px; }
-.step-connector.completed { background: var(--green); }
-.step-connector.failed { background: var(--red); }
-.step-connector.active { background: linear-gradient(to right, var(--green), var(--blue)); }
+.step-connector { flex: 1; height: 2px; background: var(--sapGroup_TitleBorderColor, var(--border)); margin-top: 14px; min-width: 12px; }
+.step-connector.completed { background: var(--sapPositiveColor); }
+.step-connector.failed { background: var(--sapNegativeColor); }
+.step-connector.active { background: linear-gradient(to right, var(--sapPositiveColor), var(--sapInformativeColor)); }
 
 /* Phase info */
+.phase-info-card { width: 100%; }
+.phase-info-card::part(root) { border-radius: var(--sapElement_BorderCornerRadius, var(--radius)); overflow: hidden; }
 .phase-info {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   padding: 14px;
 }
-.phase-label { font-size: 10px; color: var(--blue-light); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+.phase-label { font-size: 10px; color: var(--sapInformativeColor, var(--blue-light)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
 .phase-title { font-size: 17px; font-weight: 600; margin-bottom: 2px; }
-.phase-elapsed { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; min-height: 16px; }
-.phase-progress-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.progress-bar-container { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
-.progress-bar { height: 100%; background: var(--blue); border-radius: 3px; transition: width 0.4s ease; }
-.progress-pct { font-size: 12px; color: var(--text-muted); min-width: 34px; text-align: right; }
-.phase-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
-.status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; }
-.status-dot.testing { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: pulse 1.5s infinite; }
-.status-dot.completed { background: var(--green); }
-.status-dot.failed { background: var(--red); }
-.status-dot.pending { background: var(--border); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+.phase-elapsed { font-size: 11px; color: var(--sapContent_LabelColor, var(--text-muted)); margin-bottom: 10px; min-height: 16px; }
+.phase-progress { width: 100%; margin-bottom: 8px; }
+.phase-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 
 /* Stats grid */
 .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
-.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
-.stat-icon { font-size: 15px; margin-bottom: 4px; }
+.stats-grid .stat-card { width: 100%; }
+.stats-grid .stat-card::part(root) { border-radius: var(--sapElement_BorderCornerRadius, var(--radius)); overflow: hidden; }
+.stat-card-inner { padding: 12px; }
+.stat-icon { color: var(--sapContent_IconColor, var(--text-muted)); width: 1rem; height: 1rem; margin-bottom: 4px; }
 .stat-value { font-size: 20px; font-weight: 700; line-height: 1; }
-.stat-total { font-size: 13px; font-weight: 400; color: var(--text-muted); }
-.stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.stat-total { font-size: 13px; font-weight: 400; color: var(--sapContent_LabelColor, var(--text-muted)); }
+.stat-label { font-size: 10px; color: var(--sapContent_LabelColor, var(--text-muted)); margin-top: 2px; }
 
 /* Git / activity */
+.activity-card { width: 100%; }
+.activity-card::part(root) { border-radius: var(--sapElement_BorderCornerRadius, var(--radius)); overflow: hidden; }
+.activity-body { padding: 0 14px 14px; }
 .git-activity {
   display: flex; align-items: center; flex-wrap: wrap;
-  gap: 4px; padding: 5px 0 2px; font-size: 11px; color: var(--text-muted); margin-left: 15px;
+  gap: 4px; padding: 5px 0 2px; font-size: 11px; color: var(--sapContent_LabelColor, var(--text-muted));
 }
-.git-activity-icon { color: var(--blue-light); margin-right: 2px; }
+.git-activity-icon { color: var(--sapInformativeColor, var(--blue-light)); margin-right: 2px; }
 .git-file {
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
-  padding: 1px 6px; font-family: monospace; color: var(--text); font-size: 10px;
+  background: var(--sapBackgroundColor, var(--surface-2)); border: 1px solid var(--sapGroup_TitleBorderColor, var(--border)); border-radius: 4px;
+  padding: 1px 6px; font-family: monospace; font-size: 10px;
 }
-.git-file-more { color: var(--text-muted); font-style: italic; }
+.git-file-more { color: var(--sapContent_LabelColor, var(--text-muted)); font-style: italic; }
 
-.activity-section {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px;
-  display: flex; flex-direction: column;
-}
-.activity-header { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
-.activity-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
-.activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue-light); flex-shrink: 0; }
+.activity-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--sapContent_LabelColor, var(--text-muted)); margin-bottom: 10px; }
+.activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sapInformativeColor, var(--blue-light)); flex-shrink: 0; }
 
 /* Phase commits list */
 .phase-commits {
@@ -257,11 +218,11 @@ body {
   display: flex; align-items: center; gap: 10px;
   padding: 7px 10px; background: var(--surface-2); border-radius: 6px; font-size: 11px;
 }
-.commit-phase { color: var(--text-muted); min-width: 60px; }
-.commit-hash { font-family: monospace; color: var(--blue-light); min-width: 58px; }
-.commit-msg { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.commit-fixed { color: var(--green); min-width: 52px; text-align: right; }
-.commit-dur { color: var(--text-muted); min-width: 36px; text-align: right; font-size: 11px; }
+.commit-phase { color: var(--sapContent_LabelColor, var(--text-muted)); min-width: 60px; }
+.commit-hash { font-family: monospace; color: var(--sapLinkColor, var(--blue-light)); min-width: 58px; }
+.commit-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-fixed { color: var(--sapPositiveColor, var(--green)); min-width: 52px; text-align: right; }
+.commit-dur { color: var(--sapContent_LabelColor, var(--text-muted)); min-width: 36px; text-align: right; font-size: 11px; }
 
 /* ── Completed screen ──────────────────────────────────────────────────────────
    Mirrors the UI5 mockup: layout + SAP theme variables only. ui5-card owns the
@@ -274,9 +235,8 @@ body {
   color: var(--sapTextColor);
   font-family: var(--sapFontFamily);
 }
-#screen-completed > .header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--sapGroup_TitleBorderColor);
+#screen-completed > .dashboard-header {
+  --_ui5-bar-root-border-bottom: 1px solid var(--sapGroup_TitleBorderColor);
 }
 
 .completed-wrap {
@@ -419,12 +379,13 @@ body.desktop .phase-info { padding: 10px 14px; }
 body.desktop .phase-title { font-size: 15px; }
 body.desktop .phase-elapsed { margin-bottom: 6px; }
 body.desktop .stats-grid { gap: 6px; }
-body.desktop .stat-card { padding: 8px 12px; }
+body.desktop .stat-card-inner { padding: 8px 12px; }
 body.desktop .stat-value { font-size: 18px; }
-body.desktop .stat-icon { font-size: 13px; margin-bottom: 2px; }
+body.desktop .stat-icon { width: 0.8rem; height: 0.8rem; margin-bottom: 2px; }
 /* Cap activity section so it never pushes content out of view */
-body.desktop .activity-section { max-height: 220px; overflow: hidden; }
-body.desktop .activity-section .phase-commits { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
+body.desktop .activity-card { overflow: hidden; }
+body.desktop .activity-body { max-height: 180px; overflow: hidden; }
+body.desktop .activity-body .phase-commits { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
 
 /* Completed screen: takes full iframe height, inner wrap scrolls */
 body.desktop #screen-completed {
@@ -433,7 +394,7 @@ body.desktop #screen-completed {
   display: flex;
   flex-direction: column;
 }
-body.desktop #screen-completed > .header { flex-shrink: 0; }
+body.desktop #screen-completed > .dashboard-header { flex-shrink: 0; }
 
 /* Inline: cap height so it doesn't grow too tall in the chat panel */
 body.desktop:not(.fullscreen) .completed-wrap {

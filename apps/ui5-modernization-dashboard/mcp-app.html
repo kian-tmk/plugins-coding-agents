@@ -28,116 +28,118 @@
       <div id="screen-dashboard" class="screen hidden">
 
         <!-- Header -->
-        <header class="header">
-          <div class="header-title">
-            <span class="header-icon">⬡</span>
-            <span>UI5 Modernization</span>
-          </div>
-          <div class="header-actions">
-            <button class="btn-ghost btn-fullscreen" id="btn-fullscreen">⤢ Fullscreen</button>
-          </div>
-        </header>
+        <ui5-bar design="Header" class="dashboard-header">
+          <ui5-title slot="startContent" level="H5">
+            <span class="header-icon">⬡</span> UI5 Modernization
+          </ui5-title>
+          <ui5-button slot="endContent" design="Transparent" id="btn-fullscreen">⤢ Fullscreen</ui5-button>
+        </ui5-bar>
 
         <!-- Preflight strip -->
-        <div class="preflight">
-          <div class="preflight-item">
-            <span class="preflight-label">Project</span>
-            <span class="preflight-value" id="pf-project">—</span>
+        <ui5-card class="preflight-card">
+          <div class="preflight">
+            <div class="preflight-item">
+              <span class="preflight-label">Project</span>
+              <span class="preflight-value" id="pf-project">—</span>
+            </div>
+            <div class="preflight-sep"></div>
+            <div class="preflight-item">
+              <span class="preflight-label">UI5 Version</span>
+              <span class="preflight-value" id="pf-version">—</span>
+            </div>
+            <div class="preflight-sep"></div>
+            <div class="preflight-item">
+              <span class="preflight-label">Verification</span>
+              <span class="preflight-value" id="pf-verification">—</span>
+            </div>
+            <div class="preflight-sep"></div>
+            <div class="preflight-item">
+              <span class="preflight-label">Working tree</span>
+              <span class="preflight-value preflight-clean" id="pf-worktree">—</span>
+            </div>
+            <div class="preflight-sep"></div>
+            <div class="preflight-item">
+              <span class="preflight-label">Baseline</span>
+              <span class="preflight-value preflight-warn" id="pf-baseline">—</span>
+            </div>
           </div>
-          <div class="preflight-sep"></div>
-          <div class="preflight-item">
-            <span class="preflight-label">UI5 Version</span>
-            <span class="preflight-value" id="pf-version">—</span>
-          </div>
-          <div class="preflight-sep"></div>
-          <div class="preflight-item">
-            <span class="preflight-label">Verification</span>
-            <span class="preflight-value" id="pf-verification">—</span>
-          </div>
-          <div class="preflight-sep"></div>
-          <div class="preflight-item">
-            <span class="preflight-label">Working tree</span>
-            <span class="preflight-value preflight-clean" id="pf-worktree">—</span>
-          </div>
-          <div class="preflight-sep"></div>
-          <div class="preflight-item">
-            <span class="preflight-label">Baseline</span>
-            <span class="preflight-value preflight-warn" id="pf-baseline">—</span>
-          </div>
-        </div>
+        </ui5-card>
 
         <!-- Phase Stepper -->
-        <div class="stepper" id="stepper"></div>
+        <ui5-card class="stepper-card">
+          <div class="stepper" id="stepper"></div>
+        </ui5-card>
 
         <!-- Current Phase Info -->
-        <div class="phase-info">
-          <div class="phase-label" id="phase-label">Phase — of 5</div>
-          <div class="phase-title" id="phase-title">—</div>
-          <div class="phase-elapsed" id="phase-elapsed"></div>
-          <div class="phase-progress-row">
-            <div class="progress-bar-container">
-              <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+        <ui5-card class="phase-info-card">
+          <div class="phase-info">
+            <div class="phase-label" id="phase-label">Phase — of 5</div>
+            <div class="phase-title" id="phase-title">—</div>
+            <div class="phase-elapsed" id="phase-elapsed"></div>
+            <ui5-progress-indicator id="progress-bar" value="0" hide-value class="phase-progress"></ui5-progress-indicator>
+            <div class="phase-status">
+              <ui5-tag id="status-tag" design="Set2" color-scheme="6">—</ui5-tag>
             </div>
-            <span class="progress-pct" id="progress-pct">0%</span>
           </div>
-          <div class="phase-status">
-            <span class="status-dot" id="status-dot"></span>
-            <span id="status-text">—</span>
-          </div>
-        </div>
+        </ui5-card>
 
         <!-- Stats Grid -->
         <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon">📋</div>
-            <div class="stat-value"><span id="stat-fixed">0</span> <span class="stat-total">/ <span id="stat-total">0</span></span></div>
-            <div class="stat-label">findings fixed</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon">⏱</div>
-            <div class="stat-value" id="stat-elapsed">0s</div>
-            <div class="stat-label">elapsed</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon">📈</div>
-            <div class="stat-value" id="stat-progress">0%</div>
-            <div class="stat-label">overall progress</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon">🔀</div>
-            <div class="stat-value" id="stat-commits">0</div>
-            <div class="stat-label">commits</div>
-          </div>
+          <ui5-card class="stat-card">
+            <div class="stat-card-inner">
+              <ui5-icon name="task" class="stat-icon"></ui5-icon>
+              <div class="stat-value"><span id="stat-fixed">0</span> <span class="stat-total">/ <span id="stat-total">0</span></span></div>
+              <div class="stat-label">findings fixed</div>
+            </div>
+          </ui5-card>
+          <ui5-card class="stat-card">
+            <div class="stat-card-inner">
+              <ui5-icon name="history" class="stat-icon"></ui5-icon>
+              <div class="stat-value" id="stat-elapsed">0s</div>
+              <div class="stat-label">elapsed</div>
+            </div>
+          </ui5-card>
+          <ui5-card class="stat-card">
+            <div class="stat-card-inner">
+              <ui5-icon name="trend-up" class="stat-icon"></ui5-icon>
+              <div class="stat-value" id="stat-progress">0%</div>
+              <div class="stat-label">overall progress</div>
+            </div>
+          </ui5-card>
+          <ui5-card class="stat-card">
+            <div class="stat-card-inner">
+              <ui5-icon name="source-code" class="stat-icon"></ui5-icon>
+              <div class="stat-value" id="stat-commits">0</div>
+              <div class="stat-label">commits</div>
+            </div>
+          </ui5-card>
         </div>
 
         <!-- Current Activity -->
-        <div class="activity-section">
-          <div class="activity-header">Current activity</div>
-          <div class="activity-item" id="current-activity">
-            <span class="activity-dot"></span>
-            <span id="activity-text">—</span>
+        <ui5-card class="activity-card">
+          <ui5-card-header title-text="Current activity"></ui5-card-header>
+          <div class="activity-body">
+            <div class="activity-item" id="current-activity">
+              <span class="activity-dot"></span>
+              <span id="activity-text">—</span>
+            </div>
+            <div id="git-activity" class="git-activity" style="display:none"></div>
+            <div id="phase-commits" class="phase-commits"></div>
           </div>
-          <div id="git-activity" class="git-activity" style="display:none"></div>
-
-          <!-- Phase list (completed phases with commits) -->
-          <div id="phase-commits" class="phase-commits"></div>
-        </div>
+        </ui5-card>
 
       </div>
 
       <!-- ═══ COMPLETED SCREEN ═══ -->
       <div id="screen-completed" class="screen hidden">
 
-        <!-- Header (reused from dashboard screen) -->
-        <header class="header">
-          <div class="header-title">
-            <span class="header-icon">⬡</span>
-            <span>UI5 Modernization</span>
-          </div>
-          <div class="header-actions">
-            <button class="btn-ghost btn-fullscreen" id="btn-fullscreen-completed">⤢ Fullscreen</button>
-          </div>
-        </header>
+        <!-- Header -->
+        <ui5-bar design="Header" class="dashboard-header">
+          <ui5-title slot="startContent" level="H5">
+            <span class="header-icon">⬡</span> UI5 Modernization
+          </ui5-title>
+          <ui5-button slot="endContent" design="Transparent" id="btn-fullscreen-completed">⤢ Fullscreen</ui5-button>
+        </ui5-bar>
 
         <div class="completed-wrap">
 

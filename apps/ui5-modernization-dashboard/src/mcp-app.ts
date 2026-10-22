@@ -49,6 +49,8 @@ import "@ui5/webcomponents/dist/TableHeaderRow.js";
 import "@ui5/webcomponents/dist/TableHeaderCell.js";
 import "@ui5/webcomponents/dist/TableRow.js";
 import "@ui5/webcomponents/dist/TableCell.js";
+import "@ui5/webcomponents/dist/Bar.js";
+import "@ui5/webcomponents/dist/ProgressIndicator.js";
 import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/Achievement.js";
 import "@ui5/webcomponents-icons/dist/sys-enter-2.js";
@@ -56,6 +58,10 @@ import "@ui5/webcomponents-icons/dist/alert.js";
 import "@ui5/webcomponents-icons/dist/error.js";
 import "@ui5/webcomponents-icons/dist/document.js";
 import "@ui5/webcomponents-icons/dist/document-text.js";
+import "@ui5/webcomponents-icons/dist/task.js";
+import "@ui5/webcomponents-icons/dist/history.js";
+import "@ui5/webcomponents-icons/dist/trend-up.js";
+import "@ui5/webcomponents-icons/dist/source-code.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
 // Must come AFTER all registerThemePropertiesLoader calls so the theme can resolve.
@@ -139,8 +145,8 @@ interface ModernizationState {
 const screenIdle = document.getElementById("screen-idle")!;
 const screenDashboard = document.getElementById("screen-dashboard")!;
 const screenCompleted = document.getElementById("screen-completed")!;
-const btnFullscreen = document.getElementById("btn-fullscreen") as HTMLButtonElement | null;
-const btnFullscreenCompleted = document.getElementById("btn-fullscreen-completed") as HTMLButtonElement | null;
+const btnFullscreen = document.getElementById("btn-fullscreen") as HTMLElement | null;
+const btnFullscreenCompleted = document.getElementById("btn-fullscreen-completed") as HTMLElement | null;
 const stepperEl = document.getElementById("stepper")!;
 const mdOverlay = document.getElementById("md-overlay")!;
 const mdTitle = document.getElementById("md-title")!;
@@ -234,11 +240,11 @@ function buildStepper(phases: PhaseState[]) {
   const range = maxDur - minDur;
 
   function durationColor(d: number): string {
-    if (range === 0) return "var(--green)";
+    if (range === 0) return "var(--sapPositiveColor)";
     const ratio = (d - minDur) / range;
-    if (ratio < 0.33) return "var(--green)";
-    if (ratio < 0.67) return "var(--amber)";
-    return "#e07b54";
+    if (ratio < 0.33) return "var(--sapPositiveColor)";
+    if (ratio < 0.67) return "var(--sapCriticalColor)";
+    return "var(--sapNegativeColor)";
   }
 
   phases.forEach((phase, i) => {
@@ -262,7 +268,7 @@ function buildStepper(phases: PhaseState[]) {
       const dur = document.createElement("div");
       dur.className = "step-duration";
       dur.textContent = formatElapsed(phase.durationSeconds);
-      dur.style.color = phase.status === "failed" ? "var(--red)" : durationColor(phase.durationSeconds);
+      dur.style.color = phase.status === "failed" ? "var(--sapNegativeColor)" : durationColor(phase.durationSeconds);
       step.appendChild(dur);
     }
 
@@ -340,7 +346,7 @@ function buildPhaseCommits(phases: PhaseState[], gitActivity: GitActivity | null
   });
 
   const liveRows = liveCommits.map((c) => `<div class="commit-row commit-row-live">
-      <span class="commit-phase" style="color:var(--blue-light)">live</span>
+      <span class="commit-phase" style="color:var(--sapInformativeColor)">live</span>
       <span class="commit-hash">${escapeHtml(c.hash)}</span>
       <span class="commit-msg">${escapeHtml(c.message)}</span>
       <span class="commit-fixed"></span>
@@ -409,13 +415,16 @@ function renderDashboard(state: ModernizationState) {
   setText("phase-label", `Phase ${activePhase?.id ?? "—"} of ${state.phases.length}`);
   setText("phase-title", activePhase?.name ?? "—");
 
+  // Progress indicator
   const pct = state.overallProgress ?? 0;
-  const bar = document.getElementById("progress-bar") as HTMLElement;
-  bar.style.width = `${pct}%`;
-  setText("progress-pct", `${pct}%`);
+  const progressEl = document.getElementById("progress-bar") as any;
+  if (progressEl) {
+    progressEl.value = pct;
+    progressEl.displayValue = `${pct}%`;
+  }
 
+  // Status tag
   const isRunning = state.status === "running";
-  const dot = document.getElementById("status-dot") as HTMLElement;
   const isGateRunning = state.phases?.some(p => p.gateStatus === "running");
   const isFailed = state.phases?.some(p => p.status === "failed" || p.gateStatus === "failed");
   const lastActive = state.lastGitActivityAt ? new Date(state.lastGitActivityAt).getTime() : null;
@@ -423,9 +432,31 @@ function renderDashboard(state: ModernizationState) {
   const isWaiting = isRunning && silentMs !== null && silentMs > 90_000;
   const silentMin = silentMs !== null ? Math.round(silentMs / 60_000) : 0;
   const waitingText = silentMin >= 2 ? `Waiting... · vor ${silentMin}m` : "Waiting...";
-  const dotState = isFailed ? "failed" : isWaiting ? "pending" : isRunning ? (isGateRunning ? "testing" : "running") : (activePhase?.status ?? "pending");
-  dot.className = `status-dot ${dotState}`;
-  setText("status-text", isFailed ? "Failed" : isWaiting ? waitingText : isGateRunning ? "Gate running" : isRunning ? "Running" : activePhase?.status ?? "—");
+
+  const statusTag = document.getElementById("status-tag") as any;
+  if (statusTag) {
+    if (isFailed) {
+      statusTag.textContent = "Failed";
+      statusTag.setAttribute("design", "Set2");
+      statusTag.setAttribute("color-scheme", "1");
+    } else if (isWaiting) {
+      statusTag.textContent = waitingText;
+      statusTag.setAttribute("design", "Set2");
+      statusTag.setAttribute("color-scheme", "3");
+    } else if (isGateRunning) {
+      statusTag.textContent = "Gate running";
+      statusTag.setAttribute("design", "Set2");
+      statusTag.setAttribute("color-scheme", "2");
+    } else if (isRunning) {
+      statusTag.textContent = "Running";
+      statusTag.setAttribute("design", "Set2");
+      statusTag.setAttribute("color-scheme", "8");
+    } else {
+      statusTag.textContent = activePhase?.status ?? "—";
+      statusTag.setAttribute("design", "Set2");
+      statusTag.setAttribute("color-scheme", "6");
+    }
+  }
 
   syncLiveTimer(0, state.phaseStartedAt ?? null);
   setText("stat-fixed", String(state.findingsFixed ?? 0));
