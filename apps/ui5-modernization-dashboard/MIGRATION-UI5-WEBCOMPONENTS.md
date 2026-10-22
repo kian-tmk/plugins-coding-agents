@@ -1,6 +1,6 @@
 # Plan: Migration des Dashboards zu UI5 Web Components
 
-> Status: **Phase 1 (Completed + Idle) + Phase 2 (Theming-Bridge) migriert.** Stand 2026-10-22.
+> Status: **Migration abgeschlossen.** Alle Phasen (0–5) erledigt. Stand 2026-10-22.
 > Betrifft `apps/ui5-modernization-dashboard/` (die MCP-App). Architektur der App:
 > siehe `ARCHITECTURE.md` im selben Verzeichnis.
 >
@@ -76,6 +76,7 @@ MCP-ext-apps-SDK, unverändertem Dashboard/Stepper-Code) misst `dist/mcp-app.htm
 |---|---|---|
 | Baseline (vor Migration) | 310 KB | — |
 | **Completed + Idle migriert** | **~1206 KB** | **+896 KB (≈ 3,9×)** |
+| **Alle Screens migriert (final)** | **~1315 KB** | **+1005 KB (≈ 4,2×)** |
 
 **Divergenz zum Spike:** Der Spike (+220 KB) war ein *isolierter* Completed-Nachbau ohne
 `marked`, ohne MCP-SDK, ohne den übrigen Dashboard-Code **und** hatte die Theme-Registrierung
@@ -150,45 +151,66 @@ Ergebnis: belastbare Zahl + ein real migrierter Screen als Referenz-Pattern für
    Layout-Tokens bleiben), aufräumen.
 4. In **beiden** Modi testen: Claude-Desktop-iframe und Standalone-Browser (`body.desktop` vs. nicht).
 
-## Phase 3 — Dashboard- & Idle-Screen (Live-Screens)
+## Phase 3 — Dashboard- & Idle-Screen (Live-Screens) — ✅ erledigt
 
-- Idle-Empty-State → `ui5-illustrated-message` + `ui5-busy-indicator`.
-- Preflight-Strip → `ui5-panel`/`ui5-list`.
-- Stats-Grid → `ui5-card` (Pattern aus Phase 1 wiederverwenden).
+- Idle-Empty-State → `ui5-illustrated-message` + `ui5-busy-indicator` (in Phase 1 miterledigt).
+- Header (beide Screens) → `ui5-bar` + `ui5-title` + `ui5-button`.
+- Preflight-Strip → `ui5-card` (Wrapper, innerer Aufbau beibehalten).
+- Stats-Grid → 4× `ui5-card` + `ui5-icon` (task, history, trend-up, source-code).
 - Progress-Bar → `ui5-progress-indicator`.
-- Status-Dot + Text → `ui5-tag`/`ui5-badge` mit `design` (Running/Testing/Failed).
-- Commit-Liste → `ui5-list`/`ui5-table`.
-- Header (beide Screens) → `ui5-shellbar` + Fullscreen-`ui5-button`.
-- Markdown-Overlay → `ui5-dialog`.
-- **Unangetastet:** Live-Timer-Logik (`startLiveTimer`/`pauseLiveTimer`, **mcp-app.ts:612/622**)
-  und die Polling-Schleife — das ist Zustandslogik, keine UI-Technik. Nur Darstellung tauschen,
-  nicht die Datenpipeline.
+- Status-Dot + Text → `ui5-tag` mit `color-scheme` (Running/Testing/Failed/Waiting).
+- Stepper → `ui5-card` (Wrapper, Custom-Stepper-Aufbau beibehalten).
+- Phase-Info → `ui5-card` (Wrapper).
+- Activity-Section → `ui5-card` + `ui5-card-header`.
+- Commit-Liste → beibehalten (innerHTML, kein ui5-list — der Aufwand lohnt nicht, die
+  Zeilen sind einfache Flex-Rows ohne Interaktion).
+- Markdown-Overlay → beibehalten (Custom, kein ui5-dialog — der Dialog wäre hier overkill).
+- **Unangetastet:** Live-Timer-Logik und die Polling-Schleife — Zustandslogik, keine UI-Technik.
 
-## Phase 4 — Stepper (höchstes Risiko, zuletzt)
+Commit: `d5ff48d`. Bundle nach Phase 3: **~1261 KB** (+55 KB für Bar + ProgressIndicator + Icons).
+Bundle nach Phase 5 (Visual Finetuning): **~1315 KB** (+54 KB, v.a. `tnt/Tools`-Illustration + `download`-Icon).
 
-Der Phase-Stepper mit Gates zwischen den Phasen (idle/running/passed/failed, `buildStepper`
-ab **mcp-app.ts:168**) hat keinen exakten UI5-Zwilling.
-- Kandidat `ui5-wizard` für die 5 Phasen, aber Wizard modelliert Gates nicht nativ.
-- Realistische Optionen: (a) Wizard für Phasen + separates `ui5-tag` für Gate-Status zwischen
-  den Steps, (b) eine `ui5-timeline`, oder (c) genau diesen Custom-Baustein behalten und nur
-  seine Farben auf UI5-Theme-Variablen umstellen.
-- Entscheidung erst, wenn alles andere steht — dann sieht man, wie viel Fremdkörper ein
-  Custom-Stepper neben den UI5-Controls noch ist.
+## Phase 4 — Stepper (Farben auf Theme-Tokens) — ✅ erledigt
 
-## Querschnitt in JEDER Phase
+Entscheidung: **Option (c)** — Custom-Stepper-Aufbau behalten, Farben auf SAP-Theme-Tokens umgestellt.
 
-- **Zwei Render-Modi immer testen:** MCP-iframe (`app.connect()` erfolgreich → `body.desktop`)
+- `var(--green)` → `var(--sapPositiveColor)` (completed, gate-passed, connectors)
+- `var(--amber)` → `var(--sapCriticalColor)` (testing, gate-running)
+- `var(--red)` → `var(--sapNegativeColor)` (failed, gate-failed)
+- `var(--blue)` / `var(--blue-light)` → `var(--sapInformativeColor)` (running, active)
+- `var(--border)` → `var(--sapGroup_TitleBorderColor)` (pending circles, connectors)
+- `durationColor()` in `mcp-app.ts` ebenfalls auf Theme-Tokens umgestellt.
+
+Im selben Commit `d5ff48d` enthalten. Kein zusätzlicher Bundle-Zuwachs (reine CSS-Token-Umbenennung).
+
+## Phase 5 — Visual Finetuning (2026-10-22) — ✅ erledigt
+
+Post-migration visual polish across all three screens:
+
+- **Idle:** Illustration `Achievement` → `tnt/Tools`; `developer-settings` icon added to title (sized via `width`/`height` on host element — `font-size` does not control ui5-icon SVG size).
+- **Stepper:** `--sapCriticalColor` (#ffdf72) → `--sapCriticalElementColor` (#f7bf00) for stronger amber. Top padding 20px, duration labels bottom-aligned via `margin-top: auto` in flex column.
+- **Completed:** Background `transparent` (fixes dark border vs. body). Stats redesigned with icons beside values (flex row layout). Link cards rebuilt: large button area + vertical separator + dedicated download area (replaces `ui5-li` with `additional-text`). Phase table explicit column widths (`Fixed`/`Files`/`Duration`/`Commit` pinned right). Gate notes use `→` instead of `↳`. Deferred issues: inline description (no separate reason line).
+- Bundle: **~1315 KB** (+54 KB, mainly `tnt/Tools` illustration + `download` icon import).
+
+## Querschnitt (galt in JEDER Phase)
+
+- **Zwei Render-Modi immer getestet:** MCP-iframe (`app.connect()` erfolgreich → `body.desktop`)
   und Standalone-Browser (REST-Polling-Fallback). Beide Pfade sind in `mcp-app.ts` fest
-  verdrahtet (**ab ca. Zeile 729**) und dürfen nicht brechen.
+  verdrahtet und dürfen nicht brechen.
 - **DOM statt innerHTML:** konsequent Knoten erzeugen + Properties setzen; `escapeHtml` fällt
   dort weg, wo Content als `textContent`/Property geht.
-- **Nach jeder Phase bauen + Größe messen** — damit der Bundle-Zuwachs nie unbemerkt entgleist.
+- **Nach jeder Phase gebaut + Größe gemessen** — damit der Bundle-Zuwachs nie unbemerkt entgleist.
 
 ## Reihenfolge-Logik (warum so)
 
-Erst Baseline (0) → Completed-Spike mit harter Zahl (1) → nur bei grün: Theming-Bridge (2) →
+Baseline (0) → Completed-Spike mit harter Zahl (1) → nur bei grün: Theming-Bridge (2) →
 Live-Screens (3) → Stepper zuletzt (4), weil er semantisch am wenigsten sauber auf UI5 abbildet.
 
-> **Code-Referenzen** sind gegen den Stand vom 2026-10-21 geprüft. Bei Wiederaufnahme die
-> Zeilennummern kurz gegenchecken (`grep -n "function handleHostContext\|function buildStepper\|function startLiveTimer"`),
-> die Datei ändert sich.
+## Noch offen (Kür, nicht Pflicht)
+
+- **`:root` Custom-Tokens aufräumen:** `--bg`, `--surface`, `--border` etc. werden noch vom
+  Markdown-Overlay und dem Body-Fallback (Standalone-Browser) gebraucht. Könnten langfristig
+  durch SAP-Tokens ersetzt werden, wenn das Overlay auf `ui5-dialog` migriert wird.
+- **Markdown-Overlay → `ui5-dialog`:** Funktioniert, aber Aufwand/Nutzen-Verhältnis gering.
+- **Commit-Liste → `ui5-list`:** Die Zeilen sind einfache Flex-Rows ohne Interaktion —
+  ui5-list bringt hier keinen Mehrwert.

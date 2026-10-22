@@ -1,6 +1,6 @@
 # UI5 Modernization Dashboard — Architektur & Stand
 
-> Stand: 2026-10-21. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
+> Stand: 2026-10-22. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
 > zusammenspielen, welche Daten fließen und was die App heute kann.
 >
 > **Pflege-Konvention:** Bei jeder nennenswerten Änderung am Dashboard (Datenfluss,
@@ -97,14 +97,26 @@ Ein Node-Prozess, der in **zwei Modi** laufen kann — beide bedienen denselben 
 
 ### 3. Die UI (`src/mcp-app.ts` + `mcp-app.html` + `mcp-app.css`)
 
-Eine Single-Page-App mit drei Screens, umgeschaltet nach `state.status`:
+Eine Single-Page-App mit drei Screens, umgeschaltet nach `state.status`.
+Seit 2026-10-22 nutzt die gesamte UI **UI5 Web Components** (`@ui5/webcomponents`,
+`@ui5/webcomponents-fiori`, `@ui5/webcomponents-icons`). Die Controls werden als
+ES-Module importiert (keine `Assets.js`); beide Themes (`sap_horizon`, `sap_horizon_dark`)
+sind per `registerThemePropertiesLoader` registriert. `setTheme` schaltet nach
+Host-Theme (`light`/`dark`) um.
 
-- **Idle** — Startbildschirm, kein Lauf aktiv.
-- **Dashboard (running)** — Stepper (6 Phasen + Gate-Knoten), aktuelle Phase mit
-  Fortschrittsbalken, Statuszeile, 4 Stat-Kacheln (fixed/elapsed/progress/commits),
-  „Current activity", Git-Aktivität (geänderte Dateien), Commit-Liste pro Phase.
-- **Completed** — Zusammenfassung: Gesamt-Stats, Phase-Summary (je Phase eine Zeile
-  + ggf. Gate-Zeile), zurückgestellte Issues, Links zu Report/Issues.
+- **Idle** — `ui5-illustrated-message` (`tnt/Tools`) + `ui5-busy-indicator`; title includes
+  `developer-settings` icon in `--sapLinkColor`.
+- **Dashboard (running)** — `ui5-bar` (Header), `ui5-card` (Preflight, Stepper-Wrapper,
+  Phase-Info, Stats, Activity), `ui5-progress-indicator`, `ui5-tag` (Status),
+  `ui5-icon` (task/history/trend-up/source-code), `ui5-card-header`.
+  Stepper: Custom-Aufbau in `ui5-card`; Farben über SAP-Theme-Tokens
+  (`--sapPositiveColor`, `--sapCriticalElementColor`, `--sapNegativeColor`, `--sapInformativeColor`).
+- **Completed** — `ui5-card`, `ui5-table`/`ui5-table-row`/`ui5-table-cell` (Phase-Summary,
+  explicit column widths), `ui5-tag` (Gate-Status, Issues-Count), custom link-cards
+  (clickable button area + vertical separator + download icon zone),
+  `ui5-icon` (sys-enter-2, document, task, source-code, alert, download).
+  Stats cards show icons beside value+label. Gate notes use `→` arrow.
+  Deferred issues render description inline (no separate reason line).
 
 **Betriebsmodi der UI** (automatisch erkannt):
 - **MCP-App** (in Claude Desktop): `app.connect()` erfolgreich → State über MCP-Tools
@@ -146,25 +158,26 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 
 ## Was die App heute kann (Feature-Stand)
 
+- **UI5 Web Components** für alle drei Screens (Idle, Running, Completed). Gezielte
+  Imports, **kein** `Assets.js`. Bundle-Größe: ~1315 KB inline (Baseline 310 KB).
+- **Theme-Bridge**: `sap_horizon` / `sap_horizon_dark` per `registerThemePropertiesLoader`
+  registriert; `setTheme` schaltet nach Host-Theme (`light`/`dark`) in `handleHostContext`.
 - **Drei Screens** mit automatischem Wechsel nach `status`.
 - **Live-Timer**, der von `startedAt` hochzählt, bei Inaktivität (>90 s ohne
   Git-Aktivität) pausiert und nie zurückspringt. Gesamt- und Phasen-Timer.
 - **Stunden-Format in allen Timern**: `Xh Ym Zs` ab 1 h, sonst `Ym Zs` bzw. `Zs`
-  (zentrale `formatElapsed`-Funktion — greift überall: Elapsed, Phase, Stepper,
-  Phase-Summary, Completed-Subtitle).
-- **Stepper** mit Phasen- und Gate-Knoten; Dauer je abgeschlossener Phase farbcodiert
-  (grün→amber→rot nach relativer Geschwindigkeit). Gate-Dauer wird im Stepper
-  bewusst NICHT gezeigt (Übersichtlichkeit).
+  (zentrale `formatElapsed`-Funktion).
+- **Stepper** (Custom-Aufbau in `ui5-card`): Phasen- und Gate-Knoten; Farben über
+  SAP-Theme-Tokens (`--sapPositiveColor`, `--sapCriticalElementColor`, `--sapNegativeColor`,
+  `--sapInformativeColor`). Dauer je Phase farbcodiert. Gate-Dauer bewusst nicht gezeigt.
+  Top-Padding 20px; Duration-Labels am unteren Rand via `margin-top: auto`.
 - **Gate-Darstellung mit drei Zuständen** in der Completed-Phase-Summary:
-  - grün ✅ — passed, alle Tests grün
-  - amber ⚠ — passed, aber `gateTestsPassed < gateTestsTotal` (nicht geschönt)
-  - rot ❌ — failed
-  Plus optionale, eingerückte **Erklärzeile** (`gateNote`), die ohne Trennlinie
-  direkt an die Gate-Zeile anschließt (bilden einen Block). Ohne Note: nur Status.
-- **Gate-Metriken**: Dauer + Testzahlen (`gateDurationSeconds`, `gateTestsPassed/Total`).
+  grün ✅ (alle Tests grün), amber ⚠ (passed, nicht alle Tests), rot ❌ (failed);
+  plus optionale Erklärzeile (`gateNote`).
+- **Gate-Metriken**: `gateDurationSeconds`, `gateTestsPassed/Total`.
 - **Git-Aktivität** live (geänderte Dateien, Commits) über Server-Polling.
 - **Markdown-Viewer** für Report/Issues (Overlay in Desktop via `get-file`,
-  gerenderte Seite im Browser via `/files/:filename`).
+  gerenderte Seite im Browser via `/files/:filename`). Noch Custom-UI (kein `ui5-dialog`).
 - **Standalone- vs. MCP-App-Modus** mit automatischem Fallback.
 - **Stale-Schutz**: ein „running"-State älter als 24 h wird als idle behandelt.
 
@@ -178,7 +191,9 @@ npm run dev       # watch-Build + tsx-Server (Entwicklung)
 ```
 
 `dist/` und `dist-server/` sind gitignored — nach einem frischen Checkout muss
-erst gebaut werden. Laufzeit-Deps (für den Server): express, cors, marked, zod,
+erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
+`@ui5/webcomponents-fiori`, `@ui5/webcomponents-icons`, `@ui5/webcomponents-theming`,
+`@ui5/webcomponents-base`. Laufzeit-Deps (für den Server): express, cors, marked, zod,
 @modelcontextprotocol/*.
 
 ## Integration & Auslieferung
@@ -196,6 +211,36 @@ erst gebaut werden. Laufzeit-Deps (für den Server): express, cors, marked, zod,
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-10-22 — Visual finetuning: Completed & Idle Screens
+
+- **Idle screen:** Illustration changed from `Achievement` to `tnt/Tools`; title now includes
+  `developer-settings` icon with `--sapLinkColor` accent.
+- **Amber color correction:** All `--sapCriticalColor` (#ffdf72 "senfy") replaced with
+  `--sapCriticalElementColor` (#f7bf00 stronger amber) across stepper, gates, and preflight.
+- **Stepper spacing:** Top padding increased to 20px; duration labels aligned to bottom via
+  `margin-top: auto` + `min-height: 80px` on steps.
+- **Completed screen:** Background set to `transparent` (fixes dark border). Stats cards now
+  show icons (task, document, source-code) beside value+label. Link cards rebuilt as custom
+  layout: large clickable button area (opens markdown viewer) + vertical separator + download
+  icon area. Phase table columns have explicit widths (Fixed/Files/Duration/Commit pinned right).
+  Gate notes now use `→` arrow. Deferred issues render description inline.
+- Bundle size: **~1315 KB** (up from ~1261 KB, mainly tnt/Tools illustration + download icon).
+
+### 2026-10-22 — Dashboard/Running-Screen + Stepper auf UI5 Web Components migriert
+
+- Phase 3+4 der Migration (`MIGRATION-UI5-WEBCOMPONENTS.md`): alle verbleibenden Screens
+  nutzen jetzt UI5 Web Components. Die gesamte App ist migriert (Idle, Running, Completed).
+- **Running-Screen:** Header → `ui5-bar` + `ui5-title` + `ui5-button`; Preflight/Stepper/
+  Phase-Info/Stats/Activity → je `ui5-card`; Progress → `ui5-progress-indicator`;
+  Status → `ui5-tag` (Farbschema per State); Icons → `ui5-icon` (task, history, trend-up,
+  source-code); `ui5-card-header` für Activity.
+- **Stepper (Phase 4):** Custom-Aufbau beibehalten (kein `ui5-wizard`/`ui5-timeline` —
+  die Gate-Semantik passt nicht), aber alle Farben auf SAP-Theme-Tokens umgestellt
+  (`--sapPositiveColor`, `--sapCriticalColor`, `--sapNegativeColor`, `--sapInformativeColor`,
+  `--sapGroup_TitleBorderColor`).
+- `durationColor()` und Commit-Listen-Farben in `mcp-app.ts` ebenfalls auf Theme-Tokens.
+- Bundle-Größe: **~1261 KB** (+55 KB gegenüber Phase 1+2). Commit `d5ff48d`.
 
 ### 2026-10-21 — Completed- & Idle-Screen auf UI5 Web Components migriert
 - Erste echte Migrationsphase (Plan `MIGRATION-UI5-WEBCOMPONENTS.md`, Phase 1 + Idle):

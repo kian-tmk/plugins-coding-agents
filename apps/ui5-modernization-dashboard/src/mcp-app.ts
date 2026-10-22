@@ -52,7 +52,7 @@ import "@ui5/webcomponents/dist/TableCell.js";
 import "@ui5/webcomponents/dist/Bar.js";
 import "@ui5/webcomponents/dist/ProgressIndicator.js";
 import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
-import "@ui5/webcomponents-fiori/dist/illustrations/Achievement.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Tools.js";
 import "@ui5/webcomponents-icons/dist/sys-enter-2.js";
 import "@ui5/webcomponents-icons/dist/alert.js";
 import "@ui5/webcomponents-icons/dist/error.js";
@@ -62,6 +62,8 @@ import "@ui5/webcomponents-icons/dist/task.js";
 import "@ui5/webcomponents-icons/dist/history.js";
 import "@ui5/webcomponents-icons/dist/trend-up.js";
 import "@ui5/webcomponents-icons/dist/source-code.js";
+import "@ui5/webcomponents-icons/dist/developer-settings.js";
+import "@ui5/webcomponents-icons/dist/download.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
 // Must come AFTER all registerThemePropertiesLoader calls so the theme can resolve.
@@ -243,7 +245,7 @@ function buildStepper(phases: PhaseState[]) {
     if (range === 0) return "var(--sapPositiveColor)";
     const ratio = (d - minDur) / range;
     if (ratio < 0.33) return "var(--sapPositiveColor)";
-    if (ratio < 0.67) return "var(--sapCriticalColor)";
+    if (ratio < 0.67) return "var(--sapCriticalElementColor)";
     return "var(--sapNegativeColor)";
   }
 
@@ -433,28 +435,28 @@ function renderDashboard(state: ModernizationState) {
   const silentMin = silentMs !== null ? Math.round(silentMs / 60_000) : 0;
   const waitingText = silentMin >= 2 ? `Waiting... · vor ${silentMin}m` : "Waiting...";
 
-  const statusTag = document.getElementById("status-tag") as any;
-  if (statusTag) {
+  const statusEl = document.getElementById("phase-status");
+  const statusText = document.getElementById("status-text");
+  const statusBusy = document.getElementById("status-busy") as any;
+  if (statusEl && statusText && statusBusy) {
+    statusEl.className = "phase-status";
     if (isFailed) {
-      statusTag.textContent = "Failed";
-      statusTag.setAttribute("design", "Set2");
-      statusTag.setAttribute("color-scheme", "1");
+      statusText.textContent = "Failed";
+      statusEl.classList.add("status-failed");
+      statusBusy.active = false;
     } else if (isWaiting) {
-      statusTag.textContent = waitingText;
-      statusTag.setAttribute("design", "Set2");
-      statusTag.setAttribute("color-scheme", "3");
+      statusText.textContent = waitingText;
+      statusEl.classList.add("status-waiting");
+      statusBusy.active = false;
     } else if (isGateRunning) {
-      statusTag.textContent = "Gate running";
-      statusTag.setAttribute("design", "Set2");
-      statusTag.setAttribute("color-scheme", "2");
+      statusText.textContent = "Gate running";
+      statusBusy.active = true;
     } else if (isRunning) {
-      statusTag.textContent = "Running";
-      statusTag.setAttribute("design", "Set2");
-      statusTag.setAttribute("color-scheme", "8");
+      statusText.textContent = "Running";
+      statusBusy.active = true;
     } else {
-      statusTag.textContent = activePhase?.status ?? "—";
-      statusTag.setAttribute("design", "Set2");
-      statusTag.setAttribute("color-scheme", "6");
+      statusText.textContent = activePhase?.status ?? "—";
+      statusBusy.active = false;
     }
   }
 
@@ -499,7 +501,7 @@ function renderGateRow(p: PhaseState): string {
 
   const dur = p.gateDurationSeconds != null ? formatElapsed(p.gateDurationSeconds) : "";
   const note = p.gateNote
-    ? `<div class="ps-gate-note">↳ ${escapeHtml(p.gateNote)}</div>`
+    ? `<div class="ps-gate-note">→ ${escapeHtml(p.gateNote)}</div>`
     : "";
   // Gate detail as its own table row. The label cell (Phase column) spans across
   // Phase..Files so the label + note aren't cramped; the two covered cells are
@@ -531,20 +533,29 @@ function renderCompleted(state: ModernizationState) {
   statsEl.innerHTML = `
     <ui5-card class="completed-stat">
       <div class="completed-stat-inner">
-        <div class="completed-stat-value positive">${state.linterBaseline}</div>
-        <div class="completed-stat-label">findings resolved</div>
+        <ui5-icon name="task" class="completed-stat-icon"></ui5-icon>
+        <div>
+          <div class="completed-stat-value positive">${state.linterBaseline}</div>
+          <div class="completed-stat-label">findings resolved</div>
+        </div>
       </div>
     </ui5-card>
     <ui5-card class="completed-stat">
       <div class="completed-stat-inner">
-        <div class="completed-stat-value">${totalFiles}</div>
-        <div class="completed-stat-label">files changed</div>
+        <ui5-icon name="document" class="completed-stat-icon"></ui5-icon>
+        <div>
+          <div class="completed-stat-value">${totalFiles}</div>
+          <div class="completed-stat-label">files changed</div>
+        </div>
       </div>
     </ui5-card>
     <ui5-card class="completed-stat">
       <div class="completed-stat-inner">
-        <div class="completed-stat-value">${commits}</div>
-        <div class="completed-stat-label">commits</div>
+        <ui5-icon name="source-code" class="completed-stat-icon"></ui5-icon>
+        <div>
+          <div class="completed-stat-value">${commits}</div>
+          <div class="completed-stat-label">commits</div>
+        </div>
       </div>
     </ui5-card>`;
 
@@ -578,8 +589,7 @@ function renderCompleted(state: ModernizationState) {
       <div class="issue-row">
         <div class="issue-file"><ui5-icon name="document"></ui5-icon> ${escapeHtml(issue.file)}</div>
         <ui5-tag design="Critical" hide-state-icon>${escapeHtml(issue.rule)}</ui5-tag>
-        <div class="issue-msg">${escapeHtml(issue.message)}</div>
-        <div class="issue-reason">↳ ${escapeHtml(issue.reason)}</div>
+        <div class="issue-desc">${escapeHtml(issue.message)}${issue.reason ? ` <span class="issue-reason">→ ${escapeHtml(issue.reason)}</span>` : ""}</div>
       </div>`).join("");
   } else {
     sectionEl.style.display = "none";
@@ -595,14 +605,15 @@ function renderCompleted(state: ModernizationState) {
       : "";
     return `
     <ui5-card class="link-card">
-      <ui5-li
-        icon="${icon}"
-        description="${escapeHtml(sub)}"
-        data-path="${escapeHtml(filePath)}"
-        data-title="${escapeHtml(title)}"
-        ${download ? `data-download="${escapeHtml(download)}" additional-text="⬇"` : ""}>
-        ${escapeHtml(title)}
-      </ui5-li>
+      <div class="link-card-row">
+        <button class="link-card-main" data-path="${escapeHtml(filePath)}" data-title="${escapeHtml(title)}">
+          <ui5-icon name="${icon}" class="link-card-icon"></ui5-icon>
+          <div class="link-card-text">
+            <div class="link-card-title">${escapeHtml(title)}</div>
+            <div class="link-card-sub">${escapeHtml(sub)}</div>
+          </div>
+        </button>${download ? `<a class="link-card-download" href="${escapeHtml(download)}" download title="Download"><ui5-icon name="download"></ui5-icon></a>` : ""}
+      </div>
     </ui5-card>`;
   }
 
@@ -610,10 +621,10 @@ function renderCompleted(state: ModernizationState) {
     linkCard(state.reportPath, "MODERNIZATION-REPORT.md", "document-text", "Full phase breakdown & statistics") +
     linkCard(state.issuesPath, "MODERNIZATION-ISSUES.md", "alert", `${issues.length} deferred finding${issues.length !== 1 ? "s" : ""} for manual review`);
 
-  linksEl.querySelectorAll<HTMLElement>("ui5-li[data-path]").forEach((li) => {
-    li.addEventListener("click", () => {
-      const p = li.dataset.path ?? "";
-      const t = li.dataset.title ?? "File";
+  linksEl.querySelectorAll<HTMLElement>(".link-card-main[data-path]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = btn.dataset.path ?? "";
+      const t = btn.dataset.title ?? "File";
       openMarkdown(p, t);
     });
   });

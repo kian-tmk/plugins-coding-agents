@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>UI5 Modernization</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='15' fill='%230070f2'/><text x='16' y='22' text-anchor='middle' font-size='18' fill='white'>⚙</text></svg>">
     <script type="module" src="/src/mcp-app.ts"></script>
   </head>
   <body>
@@ -13,9 +14,9 @@
       <div id="screen-idle" class="screen">
         <div class="idle-wrap">
           <ui5-illustrated-message
-            name="Achievement"
-            title-text="UI5 Modernization"
+            name="tnt/Tools"
             subtitle-text="Bereit für die Modernisierung">
+            <ui5-title slot="title" level="H3"><ui5-icon name="developer-settings" style="width:0.85em; height:0.85em; vertical-align:-0.05em; color:var(--sapLinkColor, #008fff);"></ui5-icon> UI5 Modernization</ui5-title>
           </ui5-illustrated-message>
           <div class="idle-hint">
             <span>Starte den Agenten in deinem Projekt — das Dashboard verbindet sich<!--
@@ -28,12 +29,12 @@
       <div id="screen-dashboard" class="screen hidden">
 
         <!-- Header -->
-        <ui5-bar design="Header" class="dashboard-header">
-          <ui5-title slot="startContent" level="H5">
-            <span class="header-icon">⬡</span> UI5 Modernization
+        <div class="dashboard-header">
+          <ui5-title level="H5">
+            <span class="header-icon"><ui5-icon name="developer-settings"></ui5-icon></span> UI5 Modernization
           </ui5-title>
-          <ui5-button slot="endContent" design="Transparent" id="btn-fullscreen">⤢ Fullscreen</ui5-button>
-        </ui5-bar>
+          <ui5-button design="Transparent" id="btn-fullscreen">⤢ Fullscreen</ui5-button>
+        </div>
 
         <!-- Preflight strip -->
         <ui5-card class="preflight-card">
@@ -77,8 +78,9 @@
             <div class="phase-title" id="phase-title">—</div>
             <div class="phase-elapsed" id="phase-elapsed"></div>
             <ui5-progress-indicator id="progress-bar" value="0" hide-value class="phase-progress"></ui5-progress-indicator>
-            <div class="phase-status">
-              <ui5-tag id="status-tag" design="Set2" color-scheme="6">—</ui5-tag>
+            <div class="phase-status" id="phase-status">
+              <ui5-busy-indicator id="status-busy" active size="S" delay="0"></ui5-busy-indicator>
+              <span id="status-text">—</span>
             </div>
           </div>
         </ui5-card>
@@ -134,12 +136,12 @@
       <div id="screen-completed" class="screen hidden">
 
         <!-- Header -->
-        <ui5-bar design="Header" class="dashboard-header">
-          <ui5-title slot="startContent" level="H5">
-            <span class="header-icon">⬡</span> UI5 Modernization
+        <div class="dashboard-header">
+          <ui5-title level="H5">
+            <span class="header-icon"><ui5-icon name="developer-settings"></ui5-icon></span> UI5 Modernization
           </ui5-title>
-          <ui5-button slot="endContent" design="Transparent" id="btn-fullscreen-completed">⤢ Fullscreen</ui5-button>
-        </ui5-bar>
+          <ui5-button design="Transparent" id="btn-fullscreen-completed">⤢ Fullscreen</ui5-button>
+        </div>
 
         <div class="completed-wrap">
 
@@ -162,10 +164,10 @@
               <ui5-table-header-row slot="headerRow">
                 <ui5-table-header-cell width="3rem">#</ui5-table-header-cell>
                 <ui5-table-header-cell>Phase</ui5-table-header-cell>
-                <ui5-table-header-cell>Fixed</ui5-table-header-cell>
-                <ui5-table-header-cell>Files</ui5-table-header-cell>
-                <ui5-table-header-cell>Duration</ui5-table-header-cell>
-                <ui5-table-header-cell>Commit</ui5-table-header-cell>
+                <ui5-table-header-cell width="5.5rem">Fixed</ui5-table-header-cell>
+                <ui5-table-header-cell width="4.5rem">Files</ui5-table-header-cell>
+                <ui5-table-header-cell width="5rem">Duration</ui5-table-header-cell>
+                <ui5-table-header-cell width="5.5rem">Commit</ui5-table-header-cell>
               </ui5-table-header-row>
             </ui5-table>
           </ui5-card>

@@ -72,13 +72,24 @@ body {
 .btn-ghost:hover { background: var(--surface-2); }
 
 /* ── Header ── */
-.dashboard-header { --_ui5-bar-root-border-bottom: none; }
-.dashboard-header .header-icon { font-size: 18px; color: var(--sapInformativeColor, var(--blue-light)); }
+.dashboard-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 5% 0;
+}
+.dashboard-header .header-icon {
+  display: inline-flex; align-items: center;
+  font-size: 20px; color: var(--sapLinkColor, #008fff);
+}
 
 /* ── Dashboard / Running screen ── */
 #screen-dashboard {
-  padding: 14px;
+  padding: 0 0 14px;
   gap: 10px;
+}
+#screen-dashboard > :not(.dashboard-header) {
+  width: 90%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* Preflight strip */
@@ -101,8 +112,8 @@ body {
 .preflight-sep { width: 1px; height: 28px; background: var(--sapGroup_TitleBorderColor, var(--border)); }
 .preflight-label { font-size: 10px; color: var(--sapContent_LabelColor, var(--text-muted)); text-transform: uppercase; letter-spacing: 0.4px; }
 .preflight-value { font-size: 12px; font-weight: 600; }
-.preflight-clean { color: var(--sapPositiveColor, var(--green)); }
-.preflight-warn { color: var(--sapCriticalColor, var(--amber)); }
+.preflight-clean { color: var(--sapPositiveElementColor, #6dad1f); }
+.preflight-warn { color: var(--sapCriticalElementColor, #f7bf00); }
 
 /* Stepper */
 .stepper-card { width: 100%; }
@@ -111,9 +122,9 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 14px;
+  padding: 20px 14px 14px;
 }
-.step { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 0 0 auto; }
+.step { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 80px; }
 .step-circle {
   width: 30px; height: 30px;
   border-radius: 50%;
@@ -123,51 +134,53 @@ body {
   background: var(--sapBackgroundColor, var(--surface-2));
   color: var(--sapContent_LabelColor, var(--text-muted));
 }
-.step.completed .step-circle { background: var(--sapPositiveColor); border-color: var(--sapPositiveColor); color: #000; }
-.step.failed .step-circle { background: var(--sapNegativeColor); border-color: var(--sapNegativeColor); color: #fff; }
+.step.completed .step-circle { background: var(--sapPositiveElementColor, #6dad1f); border-color: var(--sapPositiveElementColor, #6dad1f); color: var(--sapGroup_ContentBackground, #1d232a); box-shadow: 0 0 3px rgba(63, 185, 80, 0.25); }
+.step.failed .step-circle { background: var(--sapNegativeColor); border-color: var(--sapNegativeColor); color: var(--sapGroup_ContentBackground, #1d232a); }
 .step.testing .step-circle {
-  background: var(--sapCriticalColor); border-color: var(--sapCriticalColor); color: #000;
+  background: var(--sapCriticalElementColor, #f7bf00); border-color: var(--sapCriticalElementColor, #f7bf00); color: #000;
   animation: step-pulse-amber 1.6s ease-in-out infinite;
 }
 .step.running .step-circle {
-  background: var(--sapInformativeColor); border-color: var(--sapInformativeColor); color: #fff;
+  background: var(--sapLinkColor); border-color: var(--sapLinkColor); color: #fff;
   animation: step-pulse 1.6s ease-in-out infinite;
 }
-.step.active .step-circle { background: var(--sapInformativeColor); border-color: var(--sapInformativeColor); color: #fff; }
+.step.active .step-circle { background: var(--sapLinkColor); border-color: var(--sapLinkColor); color: #fff; box-shadow: 0 0 4px rgba(0, 143, 255, 0.4); }
 
+.step-connector-gate { position: relative; }
 .step-gate-circle { width: 22px !important; height: 22px !important; font-size: 10px !important; }
-.step.step-gate { padding-top: 4px; }
+.step.step-gate { padding-top: 4px; margin: 0 -4px; z-index: 1; }
 .step-gate .step-label { font-size: 9px; }
 .step.step-gate.gate-running .step-gate-circle {
-  background: var(--sapCriticalColor); border-color: var(--sapCriticalColor); color: #000;
+  background: var(--sapCriticalElementColor, #f7bf00); border-color: var(--sapCriticalElementColor, #f7bf00); color: #000;
   animation: step-pulse-amber 1.6s ease-in-out infinite;
 }
-.step.step-gate.gate-passed .step-gate-circle { background: var(--sapPositiveColor); border-color: var(--sapPositiveColor); color: #000; }
-.step.step-gate.gate-failed .step-gate-circle { background: var(--sapNegativeColor); border-color: var(--sapNegativeColor); color: #fff; }
-.step.step-gate.gate-running .step-label { color: var(--sapCriticalColor); font-weight: 500; }
-.step.step-gate.gate-passed .step-label { color: var(--sapPositiveColor); }
+.step.step-gate.gate-passed .step-gate-circle { background: var(--sapPositiveElementColor, #6dad1f); border-color: var(--sapPositiveElementColor, #6dad1f); color: var(--sapGroup_ContentBackground, #1d232a); box-shadow: 0 0 3px rgba(63, 185, 80, 0.25); }
+.step.step-gate.gate-failed .step-gate-circle { background: var(--sapNegativeColor); border-color: var(--sapNegativeColor); color: var(--sapGroup_ContentBackground, #1d232a); }
+.step.step-gate.gate-running .step-label { color: var(--sapCriticalElementColor, #f7bf00); font-weight: 500; }
+.step.step-gate.gate-passed .step-label { color: var(--sapPositiveElementColor, #6dad1f); }
 .step.step-gate.gate-failed .step-label { color: var(--sapNegativeColor); font-weight: 500; }
 
-.step-connector-short { flex: 0.3 0.3 0% !important; min-width: 6px !important; margin-top: 15px !important; }
+.step-connector-short { flex: 0.5 0.5 0% !important; min-width: 10px !important; margin-top: 15px !important; }
+
 @keyframes step-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 139, 253, 0); }
-  50%       { box-shadow: 0 0 0 7px rgba(56, 139, 253, 0.35); }
+  0%, 100% { box-shadow: 0 0 3px 1px rgba(0, 143, 255, 0.5); }
+  50%       { box-shadow: 0 0 6px 3px rgba(0, 143, 255, 0.7); }
 }
 @keyframes step-pulse-amber {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0); }
-  50%       { box-shadow: 0 0 0 7px rgba(210, 153, 34, 0.35); }
+  0%, 100% { box-shadow: 0 0 3px 1px rgba(247, 191, 0, 0.5); }
+  50%       { box-shadow: 0 0 6px 3px rgba(247, 191, 0, 0.7); }
 }
 .step-label { font-size: 10px; text-align: center; color: var(--sapContent_LabelColor, var(--text-muted)); max-width: 75px; line-height: 1.3; }
 .step.active .step-label,
-.step.running .step-label { color: var(--sapInformativeColor, var(--blue-light)); font-weight: 500; }
-.step.testing .step-label { color: var(--sapCriticalColor, var(--amber)); font-weight: 500; }
+.step.running .step-label { color: var(--sapLinkColor, #008fff); font-weight: 500; }
+.step.testing .step-label { color: var(--sapCriticalElementColor, #f7bf00); font-weight: 500; }
 .step.completed .step-label { color: var(--sapTextColor, var(--text)); }
 .step.failed .step-label { color: var(--sapNegativeColor, var(--red)); font-weight: 500; }
-.step-duration { font-size: 9px; text-align: center; opacity: 0.9; margin-top: 1px; }
-.step-connector { flex: 1; height: 2px; background: var(--sapGroup_TitleBorderColor, var(--border)); margin-top: 14px; min-width: 12px; }
-.step-connector.completed { background: var(--sapPositiveColor); }
+.step-duration { font-size: 9px; text-align: center; opacity: 0.9; margin-top: auto; }
+.step-connector { flex: 1; height: 3px; background: var(--sapGroup_TitleBorderColor, var(--border)); margin-top: 14px; min-width: 12px; border-radius: 2px; }
+.step-connector.completed { background: var(--sapPositiveElementColor, #6dad1f); }
 .step-connector.failed { background: var(--sapNegativeColor); }
-.step-connector.active { background: linear-gradient(to right, var(--sapPositiveColor), var(--sapInformativeColor)); }
+.step-connector.active { background: linear-gradient(to right, var(--sapPositiveElementColor, #6dad1f), var(--sapLinkColor)); }
 
 /* Phase info */
 .phase-info-card { width: 100%; }
@@ -175,11 +188,16 @@ body {
 .phase-info {
   padding: 14px;
 }
-.phase-label { font-size: 10px; color: var(--sapInformativeColor, var(--blue-light)); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+.phase-label { font-size: 10px; color: var(--sapLinkColor, #008fff); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
 .phase-title { font-size: 17px; font-weight: 600; margin-bottom: 2px; }
 .phase-elapsed { font-size: 11px; color: var(--sapContent_LabelColor, var(--text-muted)); margin-bottom: 10px; min-height: 16px; }
 .phase-progress { width: 100%; margin-bottom: 8px; }
-.phase-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.phase-progress::part(bar) { background: linear-gradient(to right, var(--sapPositiveElementColor, #6dad1f), var(--sapLinkColor)); }
+.phase-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sapContent_LabelColor, var(--text-muted)); }
+.phase-status.status-failed { color: var(--sapNegativeColor); }
+.phase-status.status-failed #status-busy { display: none; }
+.phase-status.status-waiting { color: var(--sapCriticalElementColor, #f7bf00); }
+.phase-status.status-waiting #status-busy { display: none; }
 
 /* Stats grid */
 .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
@@ -199,7 +217,7 @@ body {
   display: flex; align-items: center; flex-wrap: wrap;
   gap: 4px; padding: 5px 0 2px; font-size: 11px; color: var(--sapContent_LabelColor, var(--text-muted));
 }
-.git-activity-icon { color: var(--sapInformativeColor, var(--blue-light)); margin-right: 2px; }
+.git-activity-icon { color: var(--sapLinkColor, #008fff); margin-right: 2px; }
 .git-file {
   background: var(--sapBackgroundColor, var(--surface-2)); border: 1px solid var(--sapGroup_TitleBorderColor, var(--border)); border-radius: 4px;
   padding: 1px 6px; font-family: monospace; font-size: 10px;
@@ -207,7 +225,7 @@ body {
 .git-file-more { color: var(--sapContent_LabelColor, var(--text-muted)); font-style: italic; }
 
 .activity-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--sapContent_LabelColor, var(--text-muted)); margin-bottom: 10px; }
-.activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sapInformativeColor, var(--blue-light)); flex-shrink: 0; }
+.activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sapLinkColor, #008fff); flex-shrink: 0; }
 
 /* Phase commits list */
 .phase-commits {
@@ -221,7 +239,7 @@ body {
 .commit-phase { color: var(--sapContent_LabelColor, var(--text-muted)); min-width: 60px; }
 .commit-hash { font-family: monospace; color: var(--sapLinkColor, var(--blue-light)); min-width: 58px; }
 .commit-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.commit-fixed { color: var(--sapPositiveColor, var(--green)); min-width: 52px; text-align: right; }
+.commit-fixed { color: var(--sapPositiveElementColor, #6dad1f); min-width: 52px; text-align: right; }
 .commit-dur { color: var(--sapContent_LabelColor, var(--text-muted)); min-width: 36px; text-align: right; font-size: 11px; }
 
 /* ── Completed screen ──────────────────────────────────────────────────────────
@@ -231,12 +249,9 @@ body {
    background (not the app's legacy --bg) so the themed cards' rounded corners and
    elevation read correctly against it. */
 #screen-completed {
-  background: var(--sapBackgroundColor);
+  background: transparent;
   color: var(--sapTextColor);
   font-family: var(--sapFontFamily);
-}
-#screen-completed > .dashboard-header {
-  --_ui5-bar-root-border-bottom: 1px solid var(--sapGroup_TitleBorderColor);
 }
 
 .completed-wrap {
@@ -253,7 +268,7 @@ body {
 
 .completed-header { display: flex; align-items: center; gap: 0.875rem; }
 .completed-icon {
-  color: var(--sapPositiveColor);
+  color: var(--sapPositiveElementColor, #6dad1f);
   width: 2.25rem; height: 2.25rem;
   flex-shrink: 0;
 }
@@ -261,9 +276,10 @@ body {
 .completed-sub { color: var(--sapContent_LabelColor); font-size: var(--sapFontSmallSize); margin-top: 0.25rem; }
 
 .completed-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.625rem; }
-.completed-stat-inner { padding: 0.75rem; }
+.completed-stat-inner { padding: 0.75rem; display: flex; align-items: center; gap: 0.75rem; }
+.completed-stat-icon { width: 1.5rem; height: 1.5rem; color: var(--sapContent_IconColor); flex-shrink: 0; }
 .completed-stat-value { font-size: 1.375rem; font-weight: bold; line-height: 1; color: var(--sapTextColor); }
-.completed-stat-value.positive { color: var(--sapPositiveColor); }
+.completed-stat-value.positive { color: var(--sapPositiveElementColor, #6dad1f); }
 .completed-stat-label { font-size: 0.625rem; color: var(--sapContent_LabelColor); margin-top: 0.25rem; }
 
 /* ui5-card provides the surface/border/radius for completed sections. */
@@ -274,7 +290,7 @@ body {
 /* Suppress the table's trailing footer border on the last row (the last phase has
    no gate row after it, so the border would otherwise dangle below Phase 6). */
 .phase-table ui5-table-row:last-of-type { border-bottom: none; }
-.phase-table .fixed { color: var(--sapPositiveColor); font-weight: bold; }
+.phase-table .fixed { color: var(--sapPositiveElementColor, #6dad1f); font-weight: bold; }
 .phase-table .hash { font-family: var(--sapFontMonospaceFamily); color: var(--sapLinkColor); }
 .phase-table .muted { color: var(--sapContent_LabelColor); }
 
@@ -286,8 +302,8 @@ body {
 .ps-gate-row .ps-gate-label { font-weight: 500; font-size: var(--sapFontSmallSize); display: inline-flex; align-items: center; gap: 0.25rem; white-space: normal; }
 .ps-gate-row .ps-gate-dur { color: var(--sapContent_LabelColor); font-family: var(--sapFontMonospaceFamily); white-space: nowrap; }
 .ps-gate-icon { width: 0.875rem; height: 0.875rem; }
-.ps-gate-pass .ps-gate-label, .ps-gate-pass .ps-gate-icon { color: var(--sapPositiveColor); }
-.ps-gate-warn .ps-gate-label, .ps-gate-warn .ps-gate-icon { color: var(--sapCriticalColor); }
+.ps-gate-pass .ps-gate-label, .ps-gate-pass .ps-gate-icon { color: var(--sapPositiveElementColor, #6dad1f); }
+.ps-gate-warn .ps-gate-label, .ps-gate-warn .ps-gate-icon { color: var(--sapCriticalElementColor, #f7bf00); }
 .ps-gate-fail .ps-gate-label, .ps-gate-fail .ps-gate-icon { color: var(--sapNegativeColor); }
 .ps-gate-note { margin-top: 0.125rem; font-size: var(--sapFontSmallSize); color: var(--sapContent_LabelColor); white-space: normal; }
 
@@ -306,13 +322,48 @@ body {
 }
 .issue-file ui5-icon { width: 0.9rem; height: 0.9rem; color: var(--sapContent_IconColor); }
 .issue-row ui5-tag { align-self: flex-start; }
-.issue-msg { color: var(--sapTextColor); font-size: var(--sapFontSmallSize); }
-.issue-reason { color: var(--sapContent_LabelColor); font-size: var(--sapFontSmallSize); }
+.issue-desc { color: var(--sapTextColor); font-size: var(--sapFontSmallSize); }
+.issue-reason { color: var(--sapContent_LabelColor); }
 
 /* Two columns when there's room; collapse to one on narrow viewports. */
 .completed-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.625rem; }
 .completed-links .link-card { width: 100%; }
-.link-card ui5-li { --_ui5-listitem-background-color: transparent; }
+.link-card ui5-card { overflow: hidden; }
+.link-card-row {
+  display: flex;
+  align-items: stretch;
+  min-height: 56px;
+}
+.link-card-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.link-card-main:hover { background: var(--sapList_Hover_Background, rgba(255,255,255,0.04)); }
+.link-card-icon { width: 1.25rem; height: 1.25rem; flex-shrink: 0; color: var(--sapContent_IconColor, #999); }
+.link-card-title { font-size: 14px; font-weight: 600; color: var(--sapTextColor, #eee); }
+.link-card-sub { font-size: 12px; color: var(--sapContent_LabelColor, #999); margin-top: 2px; }
+.link-card-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--sapGroup_TitleBorderColor, #333);
+  color: var(--sapContent_IconColor, #999);
+  cursor: pointer;
+  text-decoration: none;
+}
+.link-card-download:hover { background: var(--sapList_Hover_Background, rgba(255,255,255,0.04)); color: var(--sapLinkColor, #008fff); }
+.link-card-download ui5-icon { width: 1rem; height: 1rem; }
 
 /* ── Markdown overlay ── */
 .md-overlay {
@@ -369,7 +420,7 @@ body.desktop .app {
 body.desktop .idle-wrap { min-height: 0; flex: 1; }
 
 /* Running screen: compact so everything fits without scrolling */
-body.desktop #screen-dashboard { padding: 8px 12px 12px; gap: 6px; }
+body.desktop #screen-dashboard { padding: 0 0 12px; gap: 6px; }
 body.desktop .stepper { padding: 8px 12px; }
 body.desktop .step { gap: 4px; }
 body.desktop .step-circle { width: 26px; height: 26px; font-size: 11px; }
