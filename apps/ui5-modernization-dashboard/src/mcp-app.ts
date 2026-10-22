@@ -21,10 +21,12 @@ import darkBaseParams from "@ui5/webcomponents/dist/generated/themes/sap_horizon
 import darkFioriParams from "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
 
 // The theming package carries the base sap* design tokens on :root; the component
-// packages carry their control tokens on :host.
+// packages author their tokens (incl. density params like row/list-item height)
+// under :host, so they MUST be registered with cssVariablesTarget "host" — otherwise
+// those :host vars never resolve and controls collapse (e.g. table rows lose height).
 registerThemePropertiesLoader("@ui5/webcomponents-theming", "sap_horizon_dark", async () => darkThemingParams);
-registerThemePropertiesLoader("@ui5/webcomponents", "sap_horizon_dark", async () => darkBaseParams);
-registerThemePropertiesLoader("@ui5/webcomponents-fiori", "sap_horizon_dark", async () => darkFioriParams);
+registerThemePropertiesLoader("@ui5/webcomponents", "sap_horizon_dark", async () => darkBaseParams, "host");
+registerThemePropertiesLoader("@ui5/webcomponents-fiori", "sap_horizon_dark", async () => darkFioriParams, "host");
 
 import "@ui5/webcomponents/dist/Card.js";
 import "@ui5/webcomponents/dist/CardHeader.js";
@@ -43,9 +45,10 @@ import "@ui5/webcomponents/dist/TableCell.js";
 import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/Achievement.js";
 import "@ui5/webcomponents-icons/dist/sys-enter-2.js";
+import "@ui5/webcomponents-icons/dist/alert.js";
+import "@ui5/webcomponents-icons/dist/error.js";
 import "@ui5/webcomponents-icons/dist/document.js";
 import "@ui5/webcomponents-icons/dist/document-text.js";
-import "@ui5/webcomponents-icons/dist/alert.js";
 
 // The dashboard is dark-only today (hard-coded dark palette in mcp-app.css).
 // Match that with the UI5 dark theme. Full light/dark host-context bridge is a
@@ -434,22 +437,22 @@ function renderGateRow(p: PhaseState): string {
   if (p.gateStatus !== "passed" && p.gateStatus !== "failed") return "";
 
   const hasCounts = p.gateTestsTotal != null && p.gateTestsPassed != null;
-  // Three visual states:
-  //  - failed            → red ❌
-  //  - passed, not all    → amber ⚠ (gate green-lit, but some tests didn't pass)
-  //  - passed, all green  → green ✅
+  // Three visual states (themed ui5-icon, colored via the ps-gate-* class):
+  //  - failed            → red (error icon)
+  //  - passed, not all   → amber (alert icon) — gate green-lit, but not all tests passed
+  //  - passed, all green  → green (sys-enter-2 icon)
   const partial = p.gateStatus === "passed" && hasCounts
     && (p.gateTestsPassed as number) < (p.gateTestsTotal as number);
 
   let cls: string, icon: string, label: string;
   if (p.gateStatus === "failed") {
-    cls = "ps-gate-fail"; icon = "❌";
+    cls = "ps-gate-fail"; icon = "error";
     label = hasCounts ? `Gate: ${p.gateTestsPassed}/${p.gateTestsTotal} passed` : "Gate failed";
   } else if (partial) {
-    cls = "ps-gate-warn"; icon = "⚠";
+    cls = "ps-gate-warn"; icon = "alert";
     label = `Gate: ${p.gateTestsPassed}/${p.gateTestsTotal} Tests passed`;
   } else {
-    cls = "ps-gate-pass"; icon = "✅";
+    cls = "ps-gate-pass"; icon = "sys-enter-2";
     label = hasCounts ? `Gate: ${p.gateTestsPassed}/${p.gateTestsTotal} Tests passed` : "Gate passed";
   }
 
@@ -457,13 +460,14 @@ function renderGateRow(p: PhaseState): string {
   const note = p.gateNote
     ? `<div class="ps-gate-note">↳ ${escapeHtml(p.gateNote)}</div>`
     : "";
-  // Gate detail as its own table row: empty #, gate label in the Phase column
-  // (spanning visually via styling), duration in the Duration column.
+  // Gate detail as its own table row. The label cell (Phase column) spans across
+  // Phase..Files so the label + note aren't cramped; the two covered cells are
+  // marked as spacers (hidden via CSS). Duration keeps its own column.
   return `<ui5-table-row class="ps-gate-row ${cls}">
       <ui5-table-cell></ui5-table-cell>
-      <ui5-table-cell><span class="ps-gate-label">└ ${label} ${icon}</span>${note}</ui5-table-cell>
-      <ui5-table-cell></ui5-table-cell>
-      <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell class="ps-gate-cell"><span class="ps-gate-label">${label} <ui5-icon name="${icon}" class="ps-gate-icon"></ui5-icon></span>${note}</ui5-table-cell>
+      <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
+      <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
       <ui5-table-cell><span class="ps-gate-dur">${dur}</span></ui5-table-cell>
       <ui5-table-cell></ui5-table-cell>
     </ui5-table-row>`;
