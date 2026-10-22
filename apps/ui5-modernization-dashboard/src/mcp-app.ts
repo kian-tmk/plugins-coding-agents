@@ -11,22 +11,29 @@ import "./mcp-app.css";
 // ── UI5 Web Components ─────────────────────────────────────────────────────────
 // 🔴 CRITICAL: never import "@ui5/webcomponents*/dist/Assets.js" — it registers ALL
 // themes + ALL i18n/CLDR and the single-file build then inlines the lot (~14 MB).
-// Instead register ONLY the sap_horizon_dark theme, for each of the three packages
-// that ship theme parameters, using the raw CSS bundles we import directly. This is
-// the minimal registration — one theme, no i18n/CLDR. See MIGRATION-UI5-WEBCOMPONENTS.md.
+// Instead register ONLY the two needed themes (sap_horizon_dark + sap_horizon), for
+// each of the three packages that ship theme parameters, using the raw CSS bundles we
+// import directly. This is the minimal registration — two themes, no i18n/CLDR.
+// See MIGRATION-UI5-WEBCOMPONENTS.md.
 import { registerThemePropertiesLoader } from "@ui5/webcomponents-base/dist/asset-registries/Themes.js";
 import { setTheme } from "@ui5/webcomponents-base/dist/config/Theme.js";
 import darkThemingParams from "@ui5/webcomponents-theming/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
 import darkBaseParams from "@ui5/webcomponents/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
 import darkFioriParams from "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon_dark/parameters-bundle.css.js";
+import lightThemingParams from "@ui5/webcomponents-theming/dist/generated/themes/sap_horizon/parameters-bundle.css.js";
+import lightBaseParams from "@ui5/webcomponents/dist/generated/themes/sap_horizon/parameters-bundle.css.js";
+import lightFioriParams from "@ui5/webcomponents-fiori/dist/generated/themes/sap_horizon/parameters-bundle.css.js";
 
 // The theming package carries the base sap* design tokens on :root; the component
 // packages author their tokens (incl. density params like row/list-item height)
 // under :host, so they MUST be registered with cssVariablesTarget "host" — otherwise
 // those :host vars never resolve and controls collapse (e.g. table rows lose height).
 registerThemePropertiesLoader("@ui5/webcomponents-theming", "sap_horizon_dark", async () => darkThemingParams);
-registerThemePropertiesLoader("@ui5/webcomponents", "sap_horizon_dark", async () => darkBaseParams, "host");
-registerThemePropertiesLoader("@ui5/webcomponents-fiori", "sap_horizon_dark", async () => darkFioriParams, "host");
+registerThemePropertiesLoader("@ui5/webcomponents",         "sap_horizon_dark", async () => darkBaseParams, "host");
+registerThemePropertiesLoader("@ui5/webcomponents-fiori",   "sap_horizon_dark", async () => darkFioriParams, "host");
+registerThemePropertiesLoader("@ui5/webcomponents-theming", "sap_horizon",      async () => lightThemingParams);
+registerThemePropertiesLoader("@ui5/webcomponents",         "sap_horizon",      async () => lightBaseParams, "host");
+registerThemePropertiesLoader("@ui5/webcomponents-fiori",   "sap_horizon",      async () => lightFioriParams, "host");
 
 import "@ui5/webcomponents/dist/Card.js";
 import "@ui5/webcomponents/dist/CardHeader.js";
@@ -50,9 +57,8 @@ import "@ui5/webcomponents-icons/dist/error.js";
 import "@ui5/webcomponents-icons/dist/document.js";
 import "@ui5/webcomponents-icons/dist/document-text.js";
 
-// The dashboard is dark-only today (hard-coded dark palette in mcp-app.css).
-// Match that with the UI5 dark theme. Full light/dark host-context bridge is a
-// later migration phase (see plan Phase 2).
+// Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
+// Must come AFTER all registerThemePropertiesLoader calls so the theme can resolve.
 setTheme("sap_horizon_dark");
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -153,6 +159,10 @@ const PREFERRED_WIDTH = 720;
 const app = new App({ name: "UI5 Modernization", version: "1.0.0" });
 
 function handleHostContext(ctx: McpUiHostContext) {
+  // Map the host's binary light/dark signal to the matching sap_horizon variant.
+  // Both themes are pre-registered above; setTheme() is a no-op if the theme
+  // hasn't changed, so this is safe to call on every context update.
+  setTheme(ctx.theme === "light" ? "sap_horizon" : "sap_horizon_dark");
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
   if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);

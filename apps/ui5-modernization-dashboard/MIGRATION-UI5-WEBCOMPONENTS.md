@@ -1,6 +1,6 @@
 # Plan: Migration des Dashboards zu UI5 Web Components
 
-> Status: **Phase 1 (Completed) + Idle migriert.** Stand 2026-10-21.
+> Status: **Phase 1 (Completed + Idle) + Phase 2 (Theming-Bridge) migriert.** Stand 2026-10-22.
 > Betrifft `apps/ui5-modernization-dashboard/` (die MCP-App). Architektur der App:
 > siehe `ARCHITECTURE.md` im selben Verzeichnis.
 >
