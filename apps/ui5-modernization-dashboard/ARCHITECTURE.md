@@ -112,11 +112,16 @@ Host-Theme (`light`/`dark`) um.
   Stepper: Custom-Aufbau in `ui5-card`; Farben über SAP-Theme-Tokens
   (`--sapPositiveColor`, `--sapCriticalElementColor`, `--sapNegativeColor`, `--sapInformativeColor`).
 - **Completed** — `ui5-card`, `ui5-table`/`ui5-table-row`/`ui5-table-cell` (Phase-Summary,
-  explicit column widths), `ui5-tag` (Gate-Status, Issues-Count), custom link-cards
+  explicit column widths; Spaltenreihenfolge `# / Phase / Fixed / Files / Commit / Duration`,
+  die Duration-Spalte rechtsbündig — Werte, Gate-Dauern und Header auf einer Achse),
+  `ui5-tag` (Gate-Status, Issues-Count), custom link-cards
   (clickable button area + vertical separator + download icon zone),
   `ui5-icon` (sys-enter-2, document, task, source-code, alert, download).
   Stats cards show icons beside value+label. Gate notes use `→` arrow.
   Deferred issues render description inline (no separate reason line).
+
+Das Layout ist responsive (reine CSS-Media-Queries, Breakpoints bei 700px und 500px —
+Details unten im Feature-Stand).
 
 **Betriebsmodi der UI** (automatisch erkannt):
 - **MCP-App** (in Claude Desktop): `app.connect()` erfolgreich → State über MCP-Tools
@@ -163,6 +168,17 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 - **Theme-Bridge**: `sap_horizon` / `sap_horizon_dark` per `registerThemePropertiesLoader`
   registriert; `setTheme` schaltet nach Host-Theme (`light`/`dark`) in `handleHostContext`.
 - **Drei Screens** mit automatischem Wechsel nach `status`.
+- **Responsive Layout** (reine CSS-Media-Queries):
+  - Running-Screen max. Breite 78% / 820px, Stats als 4er-Grid.
+  - ≤ 700px: 95% Breite, Preflight als 2-Spalten-Grid, Stats 2×2, Stepper kompakt
+    (Gate-„Gate"-Text und Phasen-Dauern ausgeblendet, kleinere Kreise).
+  - ≤ 500px: Gate-Knoten ganz ausgeblendet (nur 6 Phasen-Kreise + Connectoren);
+    Gate-Status bleibt im Completed-Screen sichtbar.
+- **Desktop-Höhen (iframe)**: Completed-Screen füllt in **beiden** Modi die volle
+  iframe-Höhe und scrollt intern (Fenster scrollt nie). Fullscreen hat extra
+  Bottom-Padding, damit die Chat-Leiste die Link-Buttons nicht verdeckt.
+  Running-Screen: die Activity-Commit-Liste ist der einzige scrollende Bereich
+  (`max-height`-Cap), der Rest bleibt fix.
 - **Live-Timer**, der von `startedAt` hochzählt, bei Inaktivität (>90 s ohne
   Git-Aktivität) pausiert und nie zurückspringt. Gesamt- und Phasen-Timer.
 - **Stunden-Format in allen Timern**: `Xh Ym Zs` ab 1 h, sonst `Ym Zs` bzw. `Zs`
@@ -211,6 +227,23 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-10-28 — Responsive Layout, Phase-Summary-Alignment, Desktop-Höhen-Fixes
+
+- **Running-Screen:** max. Breite 78% / 820px (vorher 90% ohne Cap), mehr Card-Spacing
+  (gap 12px, Stats 10px), höhere Stepper-Card. Die Activity-Commit-Liste ist der einzige
+  scrollende Bereich (`max-height`-Cap) — das Fenster scrollt nicht mehr mit.
+- **Responsive (CSS-Media-Queries):** ≤ 700px → 95% Breite, Preflight als 2-Spalten-Grid,
+  Stats 2×2, Stepper kompakt (Gate-Text + Phasen-Dauern weg, kleinere Kreise). ≤ 500px →
+  Gate-Knoten ganz ausgeblendet (nur Phasen-Kreise + Connectoren).
+- **Completed Phase-Summary:** Spalten `Commit` und `Duration` getauscht (jetzt
+  `# / Phase / Fixed / Files / Commit / Duration`). Duration-Spalte rechtsbündig —
+  Phasen-Dauern, Gate-Dauern und der Spalten-Header enden auf einer Achse, mit 28px-Inset
+  passend zum Rechtsabstand der übrigen Spalten; Spalte auf 6.5rem verbreitert.
+- **Completed Desktop-Höhe:** Inline-Modus füllt jetzt die volle iframe-Höhe (vorher fester
+  `max-height: 420px`, der die untere Hälfte leer ließ). Fullscreen: Bottom-Padding auf
+  `80px + 3rem` erhöht, damit die Chat-Leiste die Report-/Issues-Link-Buttons nicht verdeckt.
+- Bundle-Größe unverändert ~1316 KB (reine Layout-/CSS-Änderungen). Commit `b76acea`.
 
 ### 2026-10-22 — Visual finetuning: Completed & Idle Screens
 
