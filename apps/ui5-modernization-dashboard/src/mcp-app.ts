@@ -505,14 +505,15 @@ function renderGateRow(p: PhaseState): string {
     : "";
   // Gate detail as its own table row. The label cell (Phase column) spans across
   // Phase..Files so the label + note aren't cramped; the two covered cells are
-  // marked as spacers (hidden via CSS). Duration keeps its own column.
+  // marked as spacers (hidden via CSS). The gate duration sits in the Duration
+  // column (last), with an empty Commit cell before it.
   return `<ui5-table-row class="ps-gate-row ${cls}">
       <ui5-table-cell></ui5-table-cell>
       <ui5-table-cell class="ps-gate-cell"><span class="ps-gate-label">${label} <ui5-icon name="${icon}" class="ps-gate-icon"></ui5-icon></span>${note}</ui5-table-cell>
       <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
       <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
-      <ui5-table-cell><span class="ps-gate-dur">${dur}</span></ui5-table-cell>
       <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell><span class="ps-gate-dur">${dur}</span></ui5-table-cell>
     </ui5-table-row>`;
 }
 
@@ -571,8 +572,8 @@ function renderCompleted(state: ModernizationState) {
       <ui5-table-cell>${escapeHtml(p.name)}</ui5-table-cell>
       <ui5-table-cell>${fixed > 0 ? `<span class="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${p.filesChanged != null ? `${p.filesChanged} files` : `<span class="muted">—</span>`}</ui5-table-cell>
-      <ui5-table-cell>${dur}</ui5-table-cell>
       <ui5-table-cell>${p.commit ? `<span class="hash">${escapeHtml(p.commit)}</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${dur}</ui5-table-cell>
     </ui5-table-row>`;
     return row + renderGateRow(p);
   }).join("");

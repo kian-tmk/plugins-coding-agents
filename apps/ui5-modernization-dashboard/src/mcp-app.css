@@ -74,8 +74,12 @@ body {
 /* ── Header ── */
 .dashboard-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 5% 0;
+  width: 78%; max-width: 820px; margin: 0 auto;
+  padding: 10px 0 0;
 }
+/* On the completed screen the content track is narrower (completed-wrap, 760px);
+   match the header to it so the title lines up with the cards below. */
+#screen-completed > .dashboard-header { max-width: 760px; }
 .dashboard-header .header-icon {
   display: inline-flex; align-items: center;
   font-size: 20px; color: var(--sapLinkColor, #008fff);
@@ -87,7 +91,8 @@ body {
   gap: 10px;
 }
 #screen-dashboard > :not(.dashboard-header) {
-  width: 90%;
+  width: 78%;
+  max-width: 820px;
   margin-left: auto;
   margin-right: auto;
 }
@@ -293,6 +298,26 @@ body {
 .phase-table .fixed { color: var(--sapPositiveElementColor, #6dad1f); font-weight: bold; }
 .phase-table .hash { font-family: var(--sapFontMonospaceFamily); color: var(--sapLinkColor); }
 .phase-table .muted { color: var(--sapContent_LabelColor); }
+/* Right-align the Duration column (last cell) so the phase duration and the gate
+   duration below it end on the same axis regardless of their differing lengths
+   (e.g. "10m 12s" vs "42s"). ui5-table-cell is display:flex with its own default
+   justify-content, so !important is needed to push the content to the end. The
+   trailing inset matches the ~28px right gap the other columns have, so the values
+   don't sit flush against the table edge. The column is widened (6.5rem in the HTML
+   header) so the longest value + inset still fits on one line. */
+.phase-table ui5-table-row ui5-table-cell:last-child {
+  justify-content: flex-end !important;
+  text-align: right;
+  padding-inline-end: 28px;
+}
+/* Align the Duration header the same way so the column title sits above its
+   (right-aligned) values instead of being left-offset. */
+.phase-table ui5-table-header-cell:last-child {
+  justify-content: flex-end !important;
+  text-align: right;
+  padding-inline-end: 28px;
+}
+.ps-gate-row .ps-gate-dur { display: block; text-align: right; }
 
 /* Gate detail row (an extra table row below its phase). The label cell spans the
    Phase..Files columns so the label + note get the screen width instead of being
@@ -419,24 +444,41 @@ body.desktop .app {
 /* Idle: center vertically within iframe */
 body.desktop .idle-wrap { min-height: 0; flex: 1; }
 
-/* Running screen: compact so everything fits without scrolling */
-body.desktop #screen-dashboard { padding: 0 0 12px; gap: 6px; }
-body.desktop .stepper { padding: 8px 12px; }
+/* Running screen: a flex column that fills the iframe. Cards keep their natural
+   height; the commit list (capped below) absorbs the slack and scrolls, so the
+   window itself does not scroll — content stays put, just the commit list moves. */
+body.desktop #screen-dashboard {
+  flex: 1;
+  min-height: 0;
+  padding: 0 0 14px;
+  gap: 12px;
+}
+body.desktop #screen-dashboard > :not(.activity-card) { flex-shrink: 0; }
+body.desktop .stepper { padding: 14px 12px; }
 body.desktop .step { gap: 4px; }
 body.desktop .step-circle { width: 26px; height: 26px; font-size: 11px; }
 body.desktop .step-label { font-size: 9px; }
 body.desktop .step-connector { margin-top: 12px; }
-body.desktop .phase-info { padding: 10px 14px; }
+body.desktop .phase-info { padding: 12px 14px; }
 body.desktop .phase-title { font-size: 15px; }
 body.desktop .phase-elapsed { margin-bottom: 6px; }
-body.desktop .stats-grid { gap: 6px; }
+body.desktop .stats-grid { gap: 10px; }
 body.desktop .stat-card-inner { padding: 8px 12px; }
 body.desktop .stat-value { font-size: 18px; }
 body.desktop .stat-icon { width: 0.8rem; height: 0.8rem; margin-bottom: 2px; }
-/* Cap activity section so it never pushes content out of view */
+/* Activity card: the commit list is the only scrolling region. ui5-card slots its
+   content through a display:contents <slot> nested several unstyleable levels deep
+   (busy-indicator → card-inner → part=content → slot), so a flex:1 chain can't reach
+   the slotted body reliably. Instead cap the commit list with a plain max-height and
+   let it scroll internally — the other cards above are fixed-height in desktop mode,
+   so a constant cap keeps the whole screen inside the panel without the window
+   scrolling. 100vh is avoided on purpose: it is unreliable inside a nested iframe. */
 body.desktop .activity-card { overflow: hidden; }
-body.desktop .activity-body { max-height: 180px; overflow: hidden; }
-body.desktop .activity-body .phase-commits { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
+body.desktop .activity-body { overflow: hidden; }
+body.desktop .activity-body .phase-commits {
+  max-height: 150px;
+  overflow-y: auto;
+}
 
 /* Completed screen: takes full iframe height, inner wrap scrolls */
 body.desktop #screen-completed {
@@ -447,9 +489,13 @@ body.desktop #screen-completed {
 }
 body.desktop #screen-completed > .dashboard-header { flex-shrink: 0; }
 
-/* Inline: cap height so it doesn't grow too tall in the chat panel */
+/* Inline: fill the iframe height and scroll internally. #screen-completed is a
+   flex column at full iframe height, so the wrap takes the leftover space instead
+   of being capped at a guessed panel height (an earlier fixed max-height left the
+   lower half of a tall inline iframe empty). */
 body.desktop:not(.fullscreen) .completed-wrap {
-  max-height: 420px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   gap: 12px;
   padding-top: 12px;
@@ -466,5 +512,72 @@ body.desktop.fullscreen .completed-wrap {
   overflow-y: auto;
   gap: 12px;
   padding-top: 12px;
-  padding-bottom: 80px;
+  /* Extra bottom room (80px base + 3rem) so the chat toolbar doesn't cover the
+     report/issues link buttons at the end of the scroll. */
+  padding-bottom: calc(80px + 3rem);
+}
+
+/* ══ NARROW VIEWPORTS (≤ 700px) ════════════════════════════════════════════
+   Below ~700px the horizontal preflight strip wraps raggedly and the stepper
+   (6 phases + 4 gates + connectors) overflows to the right — the normal stepper
+   needs ~700px to lay out without clipping. This block gives the whole dashboard
+   more of the panel (95%), turns the preflight into a tidy two-column grid, and
+   shrinks the stepper to a compact row that fits: gate labels and per-phase
+   durations are dropped, gate circles get smaller, and the phase labels tighten
+   up. overflow-x stays as a safety net for very long labels at extreme widths.
+   Applies in both desktop and standalone, hence no body.desktop. */
+@media (max-width: 700px) {
+  /* Wider track: use 95% of the narrow panel. */
+  #screen-dashboard > :not(.dashboard-header),
+  .dashboard-header,
+  #screen-completed > .dashboard-header {
+    width: 95%;
+    max-width: none;
+  }
+
+  /* Preflight → two-column label/value grid, no vertical separators. */
+  .preflight {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 20px;
+    padding: 12px 16px;
+  }
+  .preflight-item { padding: 0; }
+  .preflight-sep { display: none; }
+
+  /* Stepper compact: fits the narrow width instead of overflowing. */
+  .stepper {
+    padding: 14px 10px;
+    overflow-x: auto;            /* safety net for extreme narrowness */
+    scrollbar-width: none;       /* hide the scrollbar; content is sized to fit */
+  }
+  .stepper::-webkit-scrollbar { display: none; }
+  /* Drop per-phase durations — they cost vertical and horizontal room. */
+  .stepper .step-duration { display: none; }
+  /* Gate circles shrink and lose their "Gate" text label. */
+  .stepper .step-gate .step-label { display: none; }
+  .stepper .step-gate .step-gate-circle { width: 18px !important; height: 18px !important; font-size: 9px !important; }
+  .stepper .step.step-gate { min-height: 0; }
+  /* Phase circles and labels tighten so all six fit side by side. */
+  .stepper .step-circle { width: 24px; height: 24px; font-size: 11px; }
+  .stepper .step-label { font-size: 8.5px; max-width: 58px; line-height: 1.2; }
+  .stepper .step { min-height: 56px; gap: 4px; }
+  .stepper .step-connector { margin-top: 11px; min-width: 6px; }
+  .stepper .step-connector-short { min-width: 5px !important; margin-top: 11px !important; }
+
+  /* Stats: 2×2 grid reads better than 4-across on a narrow panel. */
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ══ VERY NARROW VIEWPORTS (≤ 500px) ═══════════════════════════════════════
+   Even the compact stepper gets cramped below ~500px. Drop the gate nodes
+   entirely so only the six phase circles + connectors remain — gate status is
+   still shown on the completed screen. The DOM lays out each gate as
+   [connector-short][step-gate][connector-short]; hide the gate and the
+   connector that follows it, keeping the one before it as the single line that
+   joins the two surrounding phases. */
+@media (max-width: 500px) {
+  .stepper .step.step-gate { display: none; }
+  /* Collapse the trailing short connector; the leading one bridges the phases. */
+  .stepper .step.step-gate + .step-connector-short { display: none; }
 }
