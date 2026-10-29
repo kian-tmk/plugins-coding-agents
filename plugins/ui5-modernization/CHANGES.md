@@ -106,6 +106,19 @@ explizite Beispiele (echter Modellname, Datum im `YYYY-MM-DD`-Format) statt gene
 > Neueste zuerst. Ein Eintrag pro nennenswerter Plugin-Änderung.
 > Format: `### JJJJ-MM-TT — Titel`, darunter kurze Stichpunkte, gern mit Commit-Hash.
 
+### 2026-10-29 — Dashboard-Server self-contained ins Plugin (Delivery-Fix)
+- **Problem:** `.mcp.json` zeigte mit `${CLAUDE_PLUGIN_ROOT}/../../apps/...` aus dem Plugin heraus — ein `..`-Pfad verletzt die Plugin-Containment-Regel (`claude plugin validate` schlägt fehl) und lädt bei echter Marketplace-Installation nicht; zudem auf gitignorte `dist*`-Artefakte.
+- **Fix (A1):** Server wird gebündelt (esbuild, alle Deps inline) und als `plugins/ui5-modernization/dashboard/dist-server/main.js` + `dashboard/dist/mcp-app.html` ins Plugin **committet**. `.mcp.json` zeigt jetzt self-contained auf `${CLAUDE_PLUGIN_ROOT}/dashboard/dist-server/main.js` — kein `..`.
+- **Verifiziert:** `claude plugin validate` grün; `claude mcp list` zeigt den Server `✔ Connected`; gebündelte main.js startet standalone ohne `node_modules`.
+- Quelle/Build bleibt in `apps/ui5-modernization-dashboard/` (`npm run deliver` aktualisiert die Plugin-Artefakte). Details in `apps/ui5-modernization-dashboard/ARCHITECTURE.md`.
+
+### 2026-10-29 — Status-Push auf MCP-Tool vereinheitlicht (desktop-sandbox-tauglich)
+- **Hintergrund:** Ein echter Lauf in Claude Code Desktop scheiterte am Dashboard — die Sandbox blockiert Port-Binding (:3001) und `/tmp`-Schreibzugriffe. Der curl-Push konnte dort nicht laufen.
+- **`push_status` auf MCP-Tool umgestellt:** Der Helper bereitet nur noch das Payload vor (reichert `elapsedSeconds` an); der Versand erfolgt in **beiden** Hosts über das `update-status`-MCP-Tool statt curl an `:3001`. `reset-status` ebenso. Kein HTTP/Port für den Push nötig — funktioniert in CLI und Desktop identisch, und robuster als der alte curl-Weg.
+- **HTTP-Server nur noch CLI:** Steps 2–4 starten den Server auf :3001 nur im CLI-Fall (für die Browser-Anzeige). Im Desktop: kein Server, kein Port, Widget via `get-status`.
+- **Logs/Linter-Output** von `/tmp` auf `${TMPDIR:-/tmp}` umgestellt (Sandbox-tauglich).
+- Begleitend in der Dashboard-App: `STATE_FILE` in `server.ts`/`main.ts` auf `$TMPDIR` (siehe `apps/ui5-modernization-dashboard/ARCHITECTURE.md`).
+
 ### 2026-10-28 — `install-dashboard`-Skill entfernt, Dashboard-Anzeige auf zwei Wege konsolidiert
 - **`skills/install-dashboard/` entfernt.** Der Skill patchte `claude_desktop_config.json`, um den Dashboard-MCP-Server in die GUI-App einzutragen. Verifiziert, dass CLI **und** Claude Code Desktop den Server bereits über die Plugin-`.mcp.json` laden (`/mcp` zeigt ihn in Code Desktop auch bei geleerter Config) — der Config-Patch war redundant.
 - **`skills/modernize-ui5-app/SKILL.md`:** die „Claude Desktop-Frage" (Schritt B inkl. Config-Detection-Bash und `/install-dashboard`-Aufruf) entfernt. Ablauf jetzt: Dashboard-Frage (Schritt A) → bei **Ja** Server-Start + Browser → direkt zur Verification-Mode-Frage. Browser-Start (Steps 1–4) und `push_status`-Mechanik unverändert.

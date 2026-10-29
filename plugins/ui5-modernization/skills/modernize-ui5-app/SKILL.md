@@ -105,7 +105,7 @@ The UI5 Modernization Dashboard shows live progress. The workflow **detects the 
 - **CLI** (`CLAUDE_CODE_ENTRYPOINT=cli`) → dashboard in the **browser** (`http://localhost:3001`).
 - **Claude Code Desktop** (`CLAUDE_CODE_ENTRYPOINT` ≠ `cli`, e.g. `claude-desktop-3p`) → dashboard as a **native inline widget** (the plugin's MCP server is loaded by the host).
 
-**Both views are fed the same way:** live updates are written ONLY by the HTTP server on `:3001` (the `push_status` curl calls the `update-status` tool, which writes the state file). The native widget's stdio server only *reads* that state file. **Therefore the HTTP server on :3001 must run in BOTH cases** — in the desktop case the widget would otherwise sit frozen. Only the *display* differs (browser tab vs. native widget).
+**Both views are fed the same way:** live updates are pushed through the **`update-status` MCP tool** (no HTTP, no port, no curl) — the dashboard server writes the state file inside its own process, reached over the already-open stdio MCP connection. This works identically in CLI and Desktop. The HTTP server on `:3001` is started **only in the CLI case**, and only to *serve the browser page* — not for pushing status. In the Desktop case no server and no port are needed (and the sandbox blocks port binding anyway); the host already loads the dashboard MCP server over stdio. Only the *display* differs (browser tab vs. native widget).
 
 Integration is **optional and non-blocking** — if declined or unavailable the skill continues normally.
 
@@ -144,7 +144,8 @@ Call `AskUserQuestion` with exactly one question, matching `DASHBOARD_HOST`. Do 
 
 **IMPORTANT — common mistakes to avoid:**
 - Do NOT bundle Schritt A and the verification mode into one `AskUserQuestion` call
-- Do NOT skip the HTTP server start in the desktop case — the widget needs :3001 to receive updates
+- Do NOT start the HTTP server / bind :3001 in the desktop case — it is blocked by the sandbox and not needed; status flows through the `update-status` MCP tool
+- Push status via the `update-status` MCP tool in BOTH hosts — never via curl to :3001
 - The next question after Schritt A (and Steps 1–4, if **Ja**) is always the verification mode — not another dashboard question
 
 If the user answered **Ja** to Schritt A, execute the following steps in order, then proceed to the verification mode question:
@@ -168,23 +169,25 @@ fi
 ```bash
 if [ "$DASHBOARD" != "false" ] && [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ]; then
   echo "⏳ Dashboard wird gebaut..."
-  (cd "$DASHBOARD_DIR" && npm run build > /tmp/ui5-dashboard-build.log 2>&1)
+  (cd "$DASHBOARD_DIR" && npm run build > "${TMPDIR:-/tmp}/ui5-dashboard-build.log" 2>&1)
   if [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ]; then
-    echo "⚠ Dashboard-Build fehlgeschlagen — Log: /tmp/ui5-dashboard-build.log"
+    echo "⚠ Dashboard-Build fehlgeschlagen — Log: ${TMPDIR:-/tmp}/ui5-dashboard-build.log"
     DASHBOARD=false
   fi
 fi
 ```
 
-#### Step 3: Start the server if not already running
+#### Step 3: Start the HTTP server — CLI only
+
+The HTTP server on :3001 serves the **browser** view and is started **only in the CLI case**. In the desktop case the dashboard MCP server is already loaded by the host (stdio) and binding a port is blocked by the sandbox — so skip the server start entirely; status flows through the `update-status` MCP tool and the widget reads it via `get-status`.
 
 ```bash
-if [ "$DASHBOARD" != "false" ]; then
+if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
   if curl -s http://localhost:3001/api/status > /dev/null 2>&1; then
     echo "✅ Dashboard-Server läuft bereits."
     DASHBOARD=true
   else
-    node "$DASHBOARD_DIR/dist-server/main.js" > /tmp/ui5-dashboard.log 2>&1 &
+    node "$DASHBOARD_DIR/dist-server/main.js" > "${TMPDIR:-/tmp}/ui5-dashboard.log" 2>&1 &
     for i in 1 2 3 4 5; do
       sleep 1
       curl -s http://localhost:3001/api/status > /dev/null 2>&1 && break
@@ -192,7 +195,7 @@ if [ "$DASHBOARD" != "false" ]; then
     if curl -s http://localhost:3001/api/status > /dev/null 2>&1; then
       DASHBOARD=true
     else
-      echo "⚠ Dashboard-Server konnte nicht gestartet werden — Log: /tmp/ui5-dashboard.log"
+      echo "⚠ Dashboard-Server konnte nicht gestartet werden — Log: ${TMPDIR:-/tmp}/ui5-dashboard.log"
       DASHBOARD=false
     fi
   fi
@@ -201,25 +204,22 @@ fi
 
 #### Step 4: Reset state and open the matching view
 
+Reset the state via the **`reset-status` MCP tool** (works in both hosts — no HTTP/port needed): call the `reset-status` tool of the `ui5-modernization-dashboard` server once here, so the dashboard starts on the idle screen.
+
 ```bash
-if [ "$DASHBOARD" = "true" ]; then
-  # Wipe any cached state from a previous run so the dashboard starts on the idle screen
-  curl -s -X POST http://localhost:3001/mcp \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"reset-status","arguments":{}}}' > /dev/null 2>&1 || true
-  if [ "$DASHBOARD_HOST" = "cli" ]; then
-    echo "✅ Dashboard gestartet: http://localhost:3001"
-    open http://localhost:3001 2>/dev/null || true
-  else
-    echo "✅ Dashboard-Server läuft (:3001). Widget wird im Desktop geöffnet."
-  fi
+if [ "$DASHBOARD" = "true" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
+  echo "✅ Dashboard gestartet: http://localhost:3001"
+  open http://localhost:3001 2>/dev/null || true
+elif [ "$DASHBOARD" = "true" ]; then
+  echo "✅ Dashboard-Widget wird im Desktop geöffnet."
 fi
 ```
 
-**Desktop only (`DASHBOARD_HOST=desktop`):** after the bash block, open the native widget by calling the dashboard MCP tool **`get-status`** (the plugin server `ui5-modernization-dashboard`). That tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline. Do this once here, right after Step 4. (The CLI case needs no such call — the browser tab is the view.)
+**Both hosts:** after resetting, deliver the first state via the `update-status` MCP tool (see the push convention below).
 
-After the dashboard setup, define the helper used throughout the skill:
+**Desktop only (`DASHBOARD_HOST=desktop`):** open the native widget by calling the dashboard MCP tool **`get-status`** (server `ui5-modernization-dashboard`) once here. That tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline. (The CLI case needs no such call — the browser tab is the view.)
+
+After the dashboard setup, define the timer helpers used throughout the skill:
 
 ```bash
 START_TS=$(date +%s)
@@ -229,21 +229,24 @@ elapsed_seconds() { echo $(( $(date +%s) - START_TS )); }
 push_status() {
   [ "$DASHBOARD" = "true" ] || return 0
   local elapsed=$(elapsed_seconds)
-  local payload
-  payload=$(python3 -c "
+  python3 -c "
 import json, sys
 d = json.loads(sys.argv[1])
 d['elapsedSeconds'] = $elapsed
 print(json.dumps(d))
-" "$1" 2>/dev/null) || payload="$1"
-  curl -s -X POST http://localhost:3001/mcp \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"update-status\",\"arguments\":$payload}}" > /dev/null 2>&1 || true
+" "$1" 2>/dev/null || printf '%s' "$1"
 }
 ```
 
-All `push_status` calls are fire-and-forget (`> /dev/null`). A failed call must never abort the run.
+**Status is pushed through the `update-status` MCP tool — the SAME mechanism in both hosts (CLI and Desktop). There is no `curl`, no HTTP server, and no port involved in the push.** The `push_status` bash helper only *prepares* the payload (it injects `elapsedSeconds` and echoes the JSON object). To actually send it, you — the agent — call the `update-status` tool of the `ui5-modernization-dashboard` MCP server, passing the prepared JSON object as the tool `arguments`.
+
+So each "push_status" step below is a two-move convention:
+1. Run `push_status "{...payload...}"` in bash to get the enriched JSON (it prints the object to stdout).
+2. Call the **`update-status` MCP tool** with that object as `arguments`.
+
+In practice you can skip step 1 and call `update-status` directly with the payload when you don't need the `elapsedSeconds` enrichment. The call is fire-and-forget: a failed push must never abort the run, and you must never block waiting on it.
+
+This replaces the old HTTP/curl push: it works in the desktop sandbox (which blocks port binding) because the MCP tool writes the state file inside the dashboard server process itself (reached over the already-open stdio connection), and it works in the CLI identically.
 
 ### Call sites
 
@@ -290,8 +293,8 @@ Skip commit if phase makes no changes.
 ### Step 1.1: Initial Analysis
 
 ```bash
-npx @ui5/linter --details 2>&1 | tee /tmp/ui5-linter-baseline.txt
-grep -c " error \| warning " /tmp/ui5-linter-baseline.txt || echo "0"
+npx @ui5/linter --details 2>&1 | tee "${TMPDIR:-/tmp}/ui5-linter-baseline.txt"
+grep -c " error \| warning " "${TMPDIR:-/tmp}/ui5-linter-baseline.txt" || echo "0"
 ```
 
 Parse: total errors/warnings, grouped by rule ID and file. Store for final comparison.
@@ -339,13 +342,13 @@ push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Ph
 
 ```bash
 npx @ui5/linter --fix
-npx @ui5/linter --details 2>&1 | tee /tmp/ui5-linter-post-autofix.txt
+npx @ui5/linter --details 2>&1 | tee "${TMPDIR:-/tmp}/ui5-linter-post-autofix.txt"
 ```
 
 Parse the post-autofix count and push it to the dashboard immediately:
 
 ```bash
-POST_AUTOFIX_COUNT=$(grep -c " error \| warning " /tmp/ui5-linter-post-autofix.txt || echo "0")
+POST_AUTOFIX_COUNT=$(grep -c " error \| warning " "${TMPDIR:-/tmp}/ui5-linter-post-autofix.txt" || echo "0")
 FIXED_AUTOFIX=$((BASELINE_COUNT - POST_AUTOFIX_COUNT))
 push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Autofix complete — ${FIXED_AUTOFIX} findings resolved\",\"findingsFixed\":$FIXED_AUTOFIX,\"findingsRemaining\":$POST_AUTOFIX_COUNT,\"overallProgress\":$(( FIXED_AUTOFIX * 100 / BASELINE_COUNT )),\"phases\":$PHASES_JSON}"
 ```

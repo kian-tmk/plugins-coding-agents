@@ -19,7 +19,7 @@ const _SERVER_FILE = fileURLToPath(import.meta.url);
 const PROJECT_DIR = _SERVER_FILE.endsWith(".ts")
   ? path.dirname(_SERVER_FILE)
   : path.resolve(path.dirname(_SERVER_FILE), "..");
-const STATE_FILE = "/tmp/ui5-modernization-state.json";
+const STATE_FILE = path.join(process.env.TMPDIR || "/tmp", "ui5-modernization-state.json");
 
 // ── Git activity polling ──────────────────────────────────────────────────────
 

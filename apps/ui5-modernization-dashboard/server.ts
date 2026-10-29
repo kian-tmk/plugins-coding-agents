@@ -15,7 +15,7 @@ const PROJECT_DIR = SERVER_FILE.endsWith(".ts")
   : path.resolve(path.dirname(SERVER_FILE), "..");
 const DIST_DIR = path.join(PROJECT_DIR, "dist");
 
-const STATE_FILE = "/tmp/ui5-modernization-state.json";
+const STATE_FILE = path.join(process.env.TMPDIR || "/tmp", "ui5-modernization-state.json");
 const resourceUri = "ui://ui5-modernization/mcp-app.html";
 
 async function readState(): Promise<Record<string, unknown> | null> {

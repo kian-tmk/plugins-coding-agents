@@ -204,6 +204,8 @@ npm run build     # vite (UI → dist/) + tsc (Server → dist-server/)
 node dist-server/main.js            # HTTP-Server auf :3001 (Browser)
 node dist-server/main.js --stdio    # stdio-Server (Claude Desktop)
 npm run dev       # watch-Build + tsx-Server (Entwicklung)
+npm run bundle    # vite UI + esbuild: Server zu EINER dist-server/main.js (Deps inline, kein node_modules)
+npm run deliver   # bundle + Artefakte nach plugins/ui5-modernization/dashboard/ kopieren (nach jeder Änderung ausführen)
 ```
 
 `dist/` und `dist-server/` sind gitignored — nach einem frischen Checkout muss
@@ -227,6 +229,22 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-10-29 — Server self-contained ins Plugin (Delivery-Fix)
+
+- **Problem:** Die Plugin-`.mcp.json` zeigte mit `${CLAUDE_PLUGIN_ROOT}/../../apps/...` aus dem Plugin heraus. Laut Doku verletzt ein `..`-Pfad die Plugin-Containment-Regel (`claude plugin validate`: „Path contains '..'…") → lädt bei echter Marketplace-Installation nicht. Zudem zeigte er auf gitignorte `dist*`-Artefakte, die nach frischem Clone fehlen.
+- **Fix (Variante A1):** Server wird per esbuild zu **einer** Datei gebündelt (`npm run bundle`: vite→`dist/mcp-app.html`, esbuild→`dist-server/main.js` mit allen 8 Laufzeit-Deps inline, kein `node_modules` zur Laufzeit). Die gebauten Artefakte werden per `scripts/copy-to-plugin.mjs` (`npm run deliver`) nach `plugins/ui5-modernization/dashboard/` kopiert und dort **committet**. Layout `dashboard/dist-server/main.js` + `dashboard/dist/mcp-app.html` erhält die bestehende `import.meta.url`-relative `../dist/`-Auflösung — **keine** Code-Änderung in `server.ts`/`main.ts`.
+- **`.mcp.json`:** Pfad jetzt `${CLAUDE_PLUGIN_ROOT}/dashboard/dist-server/main.js` — self-contained, kein `..`. `claude plugin validate` ist grün; `claude mcp list` zeigt den Server `✔ Connected`.
+- **Quelle der Wahrheit bleibt `apps/`**: dort entwickeln + `npm run deliver` nach jeder Server-/UI-Änderung, um die Plugin-Artefakte zu aktualisieren.
+- Bundle-Größe: Server `dist-server/main.js` ~2,5 MB (Deps inline), UI `dist/mcp-app.html` ~1,3 MB. Standalone-Start ohne `node_modules` verifiziert.
+
+### 2026-10-29 — Status-Transport auf MCP-Tool vereinheitlicht (desktop-sandbox-tauglich)
+
+- **Hintergrund:** Ein echter Modernisierungslauf in **Claude Code Desktop** scheiterte am Dashboard: die Desktop-Sandbox blockiert Port-Binding (`EPERM` auf :3001) **und** direkte `/tmp`-Schreibzugriffe. Der curl-basierte Push an `localhost:3001/mcp` konnte dort nicht laufen → Widget blieb leer.
+- **State-Pfad variabel:** `STATE_FILE` in `server.ts` und `main.ts` von hartcodiert `/tmp/...` auf `path.join(process.env.TMPDIR || "/tmp", "ui5-modernization-state.json")` umgestellt. Der Server schreibt in sein eigenes `$TMPDIR`; da nur der Server-Prozess die Datei anfasst, ist eine `$TMPDIR`-Divergenz zwischen Agent und Server irrelevant.
+- **Push über MCP-Tool statt curl:** Der Workflow pusht Status jetzt in **beiden** Hosts über das `update-status`-MCP-Tool (kein HTTP, kein Port, kein curl). Verifiziert, dass `update-status`/`get-status` im Desktop ohne HTTP-Server end-to-end funktionieren.
+- **HTTP-Server nur noch CLI:** Der Server auf :3001 wird nur im CLI-Fall gestartet und dient allein der **Browser-Anzeige**, nicht mehr dem Push. Im Desktop: kein Server, kein Port.
+- Bundle-Größe unverändert ~1316 KB. Die `:3001/files`-Links im Widget sind bereits an `standaloneMode` gebunden (im Desktop über das `get-file`-Tool) — keine Änderung nötig.
 
 ### 2026-10-28 — `install-dashboard`-Skill entfernt, Dashboard-Anzeige auf zwei Wege konsolidiert
 

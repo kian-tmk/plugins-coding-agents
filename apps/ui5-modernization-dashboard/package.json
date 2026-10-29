@@ -13,7 +13,9 @@
     "serve": "tsx --watch main.ts",
     "dev": "cross-env NODE_ENV=development concurrently \"npm run watch\" \"npm run serve\"",
     "start": "cross-env NODE_ENV=development npm run build && npm run serve",
-    "simulate": "tsx simulate.ts"
+    "simulate": "tsx simulate.ts",
+    "bundle": "cross-env INPUT=mcp-app.html vite build && esbuild main.ts --bundle --platform=node --format=esm --packages=bundle --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\" --outfile=dist-server/main.js",
+    "deliver": "npm run bundle && node scripts/copy-to-plugin.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.3.1",
