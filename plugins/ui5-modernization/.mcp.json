@@ -3,6 +3,13 @@
         "chrome-devtools": {
             "command": "npx",
             "args": ["-y", "chrome-devtools-mcp@latest"]
+        },
+        "ui5-modernization-dashboard": {
+            "command": "node",
+            "args": [
+                "${CLAUDE_PLUGIN_ROOT}/../../apps/ui5-modernization-dashboard/dist-server/main.js",
+                "--stdio"
+            ]
         }
     }
 }

@@ -106,6 +106,12 @@ explizite Beispiele (echter Modellname, Datum im `YYYY-MM-DD`-Format) statt gene
 > Neueste zuerst. Ein Eintrag pro nennenswerter Plugin-Änderung.
 > Format: `### JJJJ-MM-TT — Titel`, darunter kurze Stichpunkte, gern mit Commit-Hash.
 
+### 2026-10-28 — `install-dashboard`-Skill entfernt, Dashboard-Anzeige auf zwei Wege konsolidiert
+- **`skills/install-dashboard/` entfernt.** Der Skill patchte `claude_desktop_config.json`, um den Dashboard-MCP-Server in die GUI-App einzutragen. Verifiziert, dass CLI **und** Claude Code Desktop den Server bereits über die Plugin-`.mcp.json` laden (`/mcp` zeigt ihn in Code Desktop auch bei geleerter Config) — der Config-Patch war redundant.
+- **`skills/modernize-ui5-app/SKILL.md`:** die „Claude Desktop-Frage" (Schritt B inkl. Config-Detection-Bash und `/install-dashboard`-Aufruf) entfernt. Ablauf jetzt: Dashboard-Frage (Schritt A) → bei **Ja** Server-Start + Browser → direkt zur Verification-Mode-Frage. Browser-Start (Steps 1–4) und `push_status`-Mechanik unverändert.
+- **Zwei konsolidierte Anzeige-Wege** (beide aus derselben Plugin-`.mcp.json`): CLI → Browser (`localhost:3001`); Code Desktop → natives Inline-Panel oder Browser. Cowork bewusst ausgeklammert.
+- Die obigen historischen Abschnitte/Zeilen (inkl. der `install-dashboard`-Erwähnungen) bleiben als Entwicklungshistorie erhalten.
+
 ### 2026-10-21 — Gate-Metriken + klarere Install-Anleitung
 - Verification Gate pusht `gateDurationSeconds`, `gateTestsPassed`, `gateTestsTotal`,
   `gateNote`; Anleitung, `gateNote` bei nicht-vollständig grünen Tests zu setzen. (Commit `46e10eb`)

@@ -228,6 +228,14 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
+### 2026-10-28 — `install-dashboard`-Skill entfernt, Dashboard-Anzeige auf zwei Wege konsolidiert
+
+- **`install-dashboard`-Skill entfernt.** Er patchte `claude_desktop_config.json`, um den Dashboard-MCP-Server in die GUI-App zu registrieren. Verifiziert: sowohl die CLI als auch Claude Code Desktop laden den Server bereits über die Plugin-`.mcp.json` (`plugins/ui5-modernization/.mcp.json`); in Code Desktop zeigt `/mcp` den Server auch bei geleerter `claude_desktop_config.json`. Der Config-Patch war damit redundant.
+- **Zwei konsolidierte Anzeige-Wege** (beide aus derselben Plugin-`.mcp.json`, kein separates Setup): CLI → Dashboard im Browser (`localhost:3001`, Workflow startet den HTTP-Server automatisch); Claude Code Desktop → natives Inline-Panel, alternativ Browser. Beide teilen denselben State-File `/tmp/ui5-modernization-state.json`.
+- **Workflow `modernize-ui5-app`:** die „Claude Desktop-Frage" (Schritt B inkl. Config-Detection und `/install-dashboard`-Aufruf) entfällt; nach der Dashboard-Frage (Schritt A) + Server-Start folgt direkt die Verification-Mode-Frage.
+- **Hinweis zur früheren „deferred delivery"-Notiz** (unten, Abschnitt „Integration & Auslieferung"): die `.mcp.json`-Auslieferung ist umgesetzt. Verbleibender echter Blocker für fremde Nutzer: `.mcp.json` zeigt auf das gitignored `dist-server/` — nach frischem Clone fehlt der Build. Separat zu lösen.
+- **Cowork** bewusst ausgeklammert (kein typischer Entwickler-Host, kein `/mcp`).
+
 ### 2026-10-28 — Responsive Layout, Phase-Summary-Alignment, Desktop-Höhen-Fixes
 
 - **Running-Screen:** max. Breite 78% / 820px (vorher 90% ohne Cap), mehr Card-Spacing

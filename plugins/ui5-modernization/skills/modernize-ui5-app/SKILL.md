@@ -101,124 +101,53 @@ Read `references/build-and-test-commands.md`. Chrome DevTools MCP must be connec
 
 ## Dashboard Integration
 
-The UI5 Modernization Dashboard shows live progress in a browser tab and optionally as an inline panel in Claude Desktop. Integration is **optional and non-blocking** — if declined or unavailable the skill continues normally.
+The UI5 Modernization Dashboard shows live progress. The workflow **detects the host** and offers the matching view — the user is asked only one, host-appropriate question:
+- **CLI** (`CLAUDE_CODE_ENTRYPOINT=cli`) → dashboard in the **browser** (`http://localhost:3001`).
+- **Claude Code Desktop** (`CLAUDE_CODE_ENTRYPOINT` ≠ `cli`, e.g. `claude-desktop-3p`) → dashboard as a **native inline widget** (the plugin's MCP server is loaded by the host).
+
+**Both views are fed the same way:** live updates are written ONLY by the HTTP server on `:3001` (the `push_status` curl calls the `update-status` tool, which writes the state file). The native widget's stdio server only *reads* that state file. **Therefore the HTTP server on :3001 must run in BOTH cases** — in the desktop case the widget would otherwise sit frozen. Only the *display* differs (browser tab vs. native widget).
+
+Integration is **optional and non-blocking** — if declined or unavailable the skill continues normally.
 
 ### Setup (once, in Phase 0)
 
 After the prerequisite check and **before** asking for the verification mode, follow this **exact sequence** — do not combine steps, do not skip, do not reorder:
 
-#### Dashboard-Frage (AskUserQuestion — Schritt A)
-
-Call `AskUserQuestion` with exactly this question. Do NOT combine it with the verification mode question or any other question.
-
-Question: `"Möchtest du das Dashboard mit dem aktuellen Aktualisierungsfortschritt angezeigt bekommen?"`
-
-Options:
-- **Ja** — Dashboard im Browser öffnen (empfohlen)
-- **Nein** — Ohne Dashboard fortfahren
-
-→ If **Nein**: set `DASHBOARD=false`, skip Steps 1–4, skip the Claude Desktop question. Go directly to the verification mode question.
-
-→ If **Ja**: execute Steps 1–4 (server start + browser open), then continue with Schritt B.
-
-#### Steps 1–4: Server starten und Browser öffnen
-
-(See below.) Only run these if the user answered **Ja** to Schritt A.
-
-#### Claude Desktop-Frage (AskUserQuestion — Schritt B)
-
-Only reach this step after Steps 1–4 have completed successfully and `DASHBOARD=true`. Call `AskUserQuestion` as a **separate, new call** — not bundled with the dashboard question or the verification mode question.
-
-**Before asking: run this bash command to check the actual current state of the config file — do NOT infer from the conversation history:**
+#### Host erkennen (vor Schritt A)
 
 ```bash
-# Detect config path (same logic as install-dashboard Phase 0)
-for APP_CANDIDATE in "/Applications/Claude.app" "/Applications/Claude-3p.app"; do
-  if [ -d "$APP_CANDIDATE" ]; then
-    APP_BASENAME=$(basename "$APP_CANDIDATE" .app)
-    DESKTOP_CONFIG="$HOME/Library/Application Support/$APP_BASENAME/claude_desktop_config.json"
-    break
-  fi
-done
-
-```bash
-# Find the active Claude Desktop config — prefer deploymentMode=3p if multiple configs exist
-DESKTOP_CONFIG=$(python3 -c "
-import json, os
-
-candidates = [
-    os.path.expanduser('~/Library/Application Support/Claude-3p/claude_desktop_config.json'),
-    os.path.expanduser('~/Library/Application Support/Claude/claude_desktop_config.json'),
-]
-
-result = ''
-fallback = ''
-for path in candidates:
-    if os.path.isfile(path):
-        try:
-            cfg = json.load(open(path))
-            if cfg.get('deploymentMode') == '3p':
-                result = path
-                break
-        except:
-            pass
-        if not fallback:
-            fallback = path
-
-print(result or fallback)
-" 2>/dev/null)
-
-DASHBOARD_SERVER_JS="$DASHBOARD_DIR/dist-server/main.js"
-
-if [ -f "$DESKTOP_CONFIG" ]; then
-  EXISTING=$(python3 -c "
-import json, sys
-try:
-    cfg = json.load(open(sys.argv[1]))
-    args = cfg.get('mcpServers',{}).get('ui5-modernization-dashboard',{}).get('args',[])
-    print(args[0] if args else 'NOT_SET')
-except: print('NOT_SET')
-" "$DESKTOP_CONFIG" 2>/dev/null)
-  echo "DESKTOP_CONFIG: $DESKTOP_CONFIG"
-  echo "EXISTING_ENTRY: $EXISTING"
-  echo "EXPECTED: $DASHBOARD_SERVER_JS"
-  if [ -n "$EXISTING" ] && [ "$EXISTING" != "NOT_SET" ] && [ "$EXISTING" = "$DASHBOARD_SERVER_JS" ]; then
-    echo "STATUS: already_configured"
-  else
-    echo "STATUS: needs_setup"
-  fi
+# cli → browser dashboard; anything else (e.g. claude-desktop-3p) → native desktop widget
+if [ "$CLAUDE_CODE_ENTRYPOINT" = "cli" ]; then
+  DASHBOARD_HOST="cli"
 else
-  echo "DESKTOP_CONFIG: not_found"
-  echo "STATUS: needs_setup"
+  DASHBOARD_HOST="desktop"
 fi
+echo "DASHBOARD_HOST: $DASHBOARD_HOST"
 ```
 
-Read the `STATUS:` line from the bash output above.
+#### Dashboard-Frage (AskUserQuestion — Schritt A)
 
-- `STATUS: already_configured` → skip the question, tell the user "Claude Desktop ist bereits eingerichtet."
-- `STATUS: needs_setup` (or `DESKTOP_CONFIG: not_found`) → ask the question below. An empty or `NOT_SET` entry always means needs_setup — never skip when the entry is missing.
+Call `AskUserQuestion` with exactly one question, matching `DASHBOARD_HOST`. Do NOT combine it with the verification mode question or any other question.
 
-Only if `STATUS: needs_setup`, ask:
+- If `DASHBOARD_HOST=cli` — Question: `"Möchtest du das Dashboard mit dem aktuellen Fortschritt im Browser angezeigt bekommen?"`
+  Options: **Ja** — Dashboard im Browser öffnen (empfohlen) / **Nein** — Ohne Dashboard fortfahren
+- If `DASHBOARD_HOST=desktop` — Question: `"Möchtest du das Dashboard mit dem aktuellen Fortschritt als Widget hier im Desktop angezeigt bekommen?"`
+  Options: **Ja** — Dashboard-Widget öffnen (empfohlen) / **Nein** — Ohne Dashboard fortfahren
 
-Question: `"Auch in Claude Desktop einrichten?"`
+→ If **Nein**: set `DASHBOARD=false`, skip Steps 1–4. Go directly to the verification mode question.
 
-Options:
-- **Ja, jetzt einrichten** — Einmaliges Setup via `/install-dashboard` (benötigt Claude Desktop Neustart) (Empfohlen)
-- **Nein, nur Browser** — Überspringen
+→ If **Ja**: execute Steps 1–4 (server start + open the matching view), then go directly to the verification mode question.
 
-→ If **Ja, jetzt einrichten**: invoke the `install-dashboard` skill now and wait for it to complete.
+#### Steps 1–4: Server starten und Ansicht öffnen
 
-→ If **Nein, nur Browser**: continue.
-
-After Schritt B (regardless of answer): proceed to the verification mode question.
+(See below.) Only run these if the user answered **Ja** to Schritt A. The HTTP server is started in **both** host cases; Step 4 opens the browser (cli) or the native widget (desktop).
 
 **IMPORTANT — common mistakes to avoid:**
-- Do NOT ask Schritt B before starting the server (Steps 1–4 must run first)
-- Do NOT bundle Schritt A, Schritt B, and the verification mode into one `AskUserQuestion` call
-- Do NOT skip Schritt B when the user answered Ja to Schritt A
-- The next question after Schritt B is always the verification mode — not another dashboard question
+- Do NOT bundle Schritt A and the verification mode into one `AskUserQuestion` call
+- Do NOT skip the HTTP server start in the desktop case — the widget needs :3001 to receive updates
+- The next question after Schritt A (and Steps 1–4, if **Ja**) is always the verification mode — not another dashboard question
 
-If the user answered **Ja** to Schritt A, execute the following steps in order, then proceed to Schritt B:
+If the user answered **Ja** to Schritt A, execute the following steps in order, then proceed to the verification mode question:
 
 #### Step 1: Resolve the dashboard directory
 
@@ -270,7 +199,7 @@ if [ "$DASHBOARD" != "false" ]; then
 fi
 ```
 
-#### Step 4: Reset state and open the browser
+#### Step 4: Reset state and open the matching view
 
 ```bash
 if [ "$DASHBOARD" = "true" ]; then
@@ -279,10 +208,16 @@ if [ "$DASHBOARD" = "true" ]; then
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"reset-status","arguments":{}}}' > /dev/null 2>&1 || true
-  echo "✅ Dashboard gestartet: http://localhost:3001"
-  open http://localhost:3001 2>/dev/null || true
+  if [ "$DASHBOARD_HOST" = "cli" ]; then
+    echo "✅ Dashboard gestartet: http://localhost:3001"
+    open http://localhost:3001 2>/dev/null || true
+  else
+    echo "✅ Dashboard-Server läuft (:3001). Widget wird im Desktop geöffnet."
+  fi
 fi
 ```
+
+**Desktop only (`DASHBOARD_HOST=desktop`):** after the bash block, open the native widget by calling the dashboard MCP tool **`get-status`** (the plugin server `ui5-modernization-dashboard`). That tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline. Do this once here, right after Step 4. (The CLI case needs no such call — the browser tab is the view.)
 
 After the dashboard setup, define the helper used throughout the skill:
 
