@@ -140,7 +140,6 @@ interface ModernizationState {
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
-  viewId?: string;
 }
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -799,7 +798,6 @@ async function fetchRestStatus(): Promise<ModernizationState | null> {
 // ── Polling ───────────────────────────────────────────────────────────────────
 
 let polling = false;
-let myViewId: string | undefined;
 
 async function poll() {
   if (!polling) return;
@@ -809,15 +807,7 @@ async function poll() {
       if (state) applyState(state);
     } else {
       const result = await app.callServerTool({ name: "get-status", arguments: {} });
-      const state = result.structuredContent as Record<string, unknown> | undefined;
-      // If another chat opened the dashboard, this widget is stale — tear down.
-      if (myViewId && state?.viewId && state.viewId !== myViewId) {
-        polling = false;
-        stopLiveTimer();
-        app.requestTeardown().catch(() => {});
-        return;
-      }
-      applyState(state);
+      applyState(result.structuredContent);
     }
   } catch (err) {
     console.error("poll error:", err);
@@ -838,9 +828,7 @@ app.onerror = console.error;
 app.onhostcontextchanged = handleHostContext;
 
 app.ontoolresult = (result) => {
-  const state = result.structuredContent as Record<string, unknown> | undefined;
-  if (state?.viewId && !myViewId) myViewId = state.viewId as string;
-  applyState(state);
+  applyState(result.structuredContent);
 };
 
 // ── Eager REST pre-fetch ──────────────────────────────────────────────────────

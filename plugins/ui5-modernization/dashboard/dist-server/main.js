@@ -61094,7 +61094,6 @@ function G(B2, Q2, F2, V2, q2) {
 }
 
 // server.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
 import fs2 from "node:fs/promises";
 import path2 from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61572,15 +61571,7 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
       outputSchema: stateSchema,
       _meta: { ui: { resourceUri } }
     },
-    async () => {
-      const state = await readState(stateFile) ?? {};
-      const viewId = randomUUID3();
-      await saveState({ ...state, viewId }, stateFile);
-      return {
-        content: [{ type: "text", text: state.status ? `Status: ${state.status}` : "No run active." }],
-        structuredContent: { ...state, viewId }
-      };
-    }
+    statusResult
   );
   server.registerTool(
     "get-status",

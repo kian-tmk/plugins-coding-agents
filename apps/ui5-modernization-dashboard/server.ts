@@ -4,7 +4,6 @@ import {
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer, type CallToolResult, type ReadResourceResult } from "@modelcontextprotocol/server";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,7 +99,6 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
   };
 
   // Only this explicit tool opens a widget. Data tools must not carry a UI resource.
-  // Each call rotates the viewId so previous widgets detect they are stale and tear down.
   registerAppTool(
     server,
     "open-dashboard",
@@ -111,15 +109,7 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
       outputSchema: stateSchema,
       _meta: { ui: { resourceUri } },
     },
-    async (): Promise<CallToolResult> => {
-      const state = await readState(stateFile) ?? {};
-      const viewId = randomUUID();
-      await saveState({ ...state, viewId }, stateFile);
-      return {
-        content: [{ type: "text", text: state.status ? `Status: ${state.status}` : "No run active." }],
-        structuredContent: { ...state, viewId },
-      };
-    },
+    statusResult,
   );
 
   server.registerTool(
