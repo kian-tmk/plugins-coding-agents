@@ -140,6 +140,7 @@ interface ModernizationState {
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
+  viewId?: string;
 }
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -147,8 +148,6 @@ interface ModernizationState {
 const screenIdle = document.getElementById("screen-idle")!;
 const screenDashboard = document.getElementById("screen-dashboard")!;
 const screenCompleted = document.getElementById("screen-completed")!;
-const btnFullscreen = document.getElementById("btn-fullscreen") as HTMLElement | null;
-const btnFullscreenCompleted = document.getElementById("btn-fullscreen-completed") as HTMLElement | null;
 const stepperEl = document.getElementById("stepper")!;
 const mdOverlay = document.getElementById("md-overlay")!;
 const mdTitle = document.getElementById("md-title")!;
@@ -167,41 +166,15 @@ const PREFERRED_WIDTH = 720;
 const app = new App({ name: "UI5 Modernization", version: "1.0.0" });
 
 function handleHostContext(ctx: McpUiHostContext) {
-  // Map the host's binary light/dark signal to the matching sap_horizon variant.
-  // Both themes are pre-registered above; setTheme() is a no-op if the theme
-  // hasn't changed, so this is safe to call on every context update.
   setTheme(ctx.theme === "light" ? "sap_horizon" : "sap_horizon_dark");
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
   if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
-  if (ctx.displayMode) syncDisplayModeButton(ctx.displayMode);
 }
 
 // Ask the host for a wider inline frame. Height is left to the host / content.
 function requestPreferredWidth() {
   app.sendSizeChanged({ width: PREFERRED_WIDTH }).catch(() => {});
-}
-
-// ── Fullscreen toggle ──────────────────────────────────────────────────────────
-
-let currentDisplayMode: "inline" | "fullscreen" | "pip" = "inline";
-
-function syncDisplayModeButton(mode: "inline" | "fullscreen" | "pip") {
-  currentDisplayMode = mode;
-  const label = mode === "fullscreen" ? "⤢ Inline" : "⤢ Fullscreen";
-  if (btnFullscreen) btnFullscreen.textContent = label;
-  if (btnFullscreenCompleted) btnFullscreenCompleted.textContent = label;
-  document.body.classList.toggle("fullscreen", mode === "fullscreen");
-}
-
-async function toggleFullscreen() {
-  const next = currentDisplayMode === "fullscreen" ? "inline" : "fullscreen";
-  try {
-    const result = await app.requestDisplayMode({ mode: next });
-    syncDisplayModeButton(result.mode);
-  } catch (err) {
-    console.error("display mode change failed:", err);
-  }
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -826,6 +799,7 @@ async function fetchRestStatus(): Promise<ModernizationState | null> {
 // ── Polling ───────────────────────────────────────────────────────────────────
 
 let polling = false;
+let myViewId: string | undefined;
 
 async function poll() {
   if (!polling) return;
@@ -835,7 +809,15 @@ async function poll() {
       if (state) applyState(state);
     } else {
       const result = await app.callServerTool({ name: "get-status", arguments: {} });
-      applyState(result.structuredContent);
+      const state = result.structuredContent as Record<string, unknown> | undefined;
+      // If another chat opened the dashboard, this widget is stale — tear down.
+      if (myViewId && state?.viewId && state.viewId !== myViewId) {
+        polling = false;
+        stopLiveTimer();
+        app.requestTeardown().catch(() => {});
+        return;
+      }
+      applyState(state);
     }
   } catch (err) {
     console.error("poll error:", err);
@@ -849,11 +831,6 @@ function startPolling() {
   poll();
 }
 
-// ── Button handlers ───────────────────────────────────────────────────────────
-
-btnFullscreen?.addEventListener("click", toggleFullscreen);
-btnFullscreenCompleted?.addEventListener("click", toggleFullscreen);
-
 // ── Connect ───────────────────────────────────────────────────────────────────
 
 app.onteardown = async () => { polling = false; stopLiveTimer(); return {}; };
@@ -861,7 +838,9 @@ app.onerror = console.error;
 app.onhostcontextchanged = handleHostContext;
 
 app.ontoolresult = (result) => {
-  applyState(result.structuredContent);
+  const state = result.structuredContent as Record<string, unknown> | undefined;
+  if (state?.viewId && !myViewId) myViewId = state.viewId as string;
+  applyState(state);
 };
 
 // ── Eager REST pre-fetch ──────────────────────────────────────────────────────
@@ -929,10 +908,6 @@ app.connect().then(async () => {
   // MCP app connection failed — running in standalone browser mode
   console.log("MCP app connection unavailable — using standalone REST polling");
   standaloneMode = true;
-
-  // Hide fullscreen buttons — not meaningful in a plain browser tab
-  if (btnFullscreen) btnFullscreen.style.display = "none";
-  if (btnFullscreenCompleted) btnFullscreenCompleted.style.display = "none";
 
   const state = await fetchRestStatus();
   if (state?.status === "running") {
