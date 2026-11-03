@@ -169,6 +169,41 @@ function handleHostContext(ctx: McpUiHostContext) {
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
   if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
+  const modes = (ctx as any).availableDisplayModes as string[] | undefined;
+  if (modes) availableDisplayModes = modes;
+  const dm = (ctx as any).displayMode as string | undefined;
+  if (dm) currentDisplayMode = dm;
+  syncFullscreenButtons();
+}
+
+// ── Fullscreen ──────────────────────────────────────────────────────────────
+// Ready to use — add <ui5-button id="btn-fullscreen" icon="full-screen"
+// design="Transparent"> to .dashboard-header in mcp-app.html and wire it with
+// document.getElementById("btn-fullscreen")?.addEventListener("click", toggleFullscreen).
+// Blocked by 3P feature gate 513873720 (epitaxyMcpAppPane) as of 2026-11-03.
+
+let currentDisplayMode = "inline";
+let availableDisplayModes: string[] = ["inline"];
+
+function syncFullscreenButtons() {
+  const isFullscreen = currentDisplayMode === "fullscreen";
+  const icon = isFullscreen ? "exit-full-screen" : "full-screen";
+  for (const id of ["btn-fullscreen", "btn-fullscreen-completed"]) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    (btn as any).icon = icon;
+  }
+}
+
+async function toggleFullscreen() {
+  const next = currentDisplayMode === "fullscreen" ? "inline" : "fullscreen";
+  try {
+    const res = await app.requestDisplayMode({ mode: next });
+    currentDisplayMode = (res as any).mode ?? next;
+  } catch {
+    // host rejected
+  }
+  syncFullscreenButtons();
 }
 
 // Ask the host for a wider inline frame. Height is left to the host / content.
