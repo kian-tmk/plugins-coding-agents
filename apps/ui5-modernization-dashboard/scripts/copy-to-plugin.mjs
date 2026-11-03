@@ -4,7 +4,7 @@
 // server or UI. The in-plugin layout mirrors the app's dist-server/ + dist/
 // so server.ts's import.meta.url-relative "../dist/mcp-app.html" resolution
 // works unchanged.
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,8 @@ const PLUGIN_DASHBOARD = path.resolve(APP_DIR, "../../plugins/ui5-modernization/
 const files = [
   ["dist-server/main.js", "dist-server/main.js"],
   ["dist/mcp-app.html", "dist/mcp-app.html"],
+  ["desktop-setup.mjs", "desktop-setup.mjs"],
+  ["desktop-setup-worker.mjs", "desktop-setup-worker.mjs"],
 ];
 
 await rm(PLUGIN_DASHBOARD, { recursive: true, force: true });
@@ -24,4 +26,5 @@ for (const [src, dst] of files) {
   await cp(from, to);
   console.log(`copied ${src} -> plugins/ui5-modernization/dashboard/${dst}`);
 }
+await writeFile(path.join(PLUGIN_DASHBOARD, "package.json"), JSON.stringify({ private: true, type: "module" }, null, 2) + "\n");
 console.log("Dashboard artifacts delivered into the plugin.");

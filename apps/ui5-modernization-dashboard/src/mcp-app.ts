@@ -397,7 +397,7 @@ function renderDashboard(state: ModernizationState) {
   setText("pf-version", state.ui5Version || "—");
   setText("pf-verification", state.verificationMode || "autonomous");
   const worktreeEl = document.getElementById("pf-worktree");
-  const worktreeStatus = state.workingTreeStatus || "clean";
+  const worktreeStatus = state.workingTreeStatus || "—";
   if (worktreeEl) {
     worktreeEl.textContent = worktreeStatus;
     const isClean = /clean/i.test(worktreeStatus);
@@ -461,9 +461,33 @@ function renderDashboard(state: ModernizationState) {
   }
 
   syncLiveTimer(0, state.phaseStartedAt ?? null);
-  setText("stat-fixed", String(state.findingsFixed ?? 0));
-  setText("stat-total", String(state.totalFindings ?? state.linterBaseline ?? 0));
-  setText("stat-progress", `${pct}%`);
+
+  // Derive counters from phases when top-level fields lag behind
+  const baseline = state.totalFindings ?? state.linterBaseline ?? 0;
+  let fixed = state.findingsFixed ?? 0;
+  let remaining = state.findingsRemaining ?? baseline;
+  let progress = pct;
+  if (baseline > 0 && state.phases?.length) {
+    const done = state.phases.filter(
+      (p) => p.status === "completed" && typeof p.findingsAfter === "number"
+    );
+    if (done.length > 0) {
+      const lastRemaining = done[done.length - 1].findingsAfter!;
+      const derived = baseline - lastRemaining;
+      if (derived > fixed) { fixed = derived; remaining = lastRemaining; }
+      const derivedPct = Math.round((fixed / baseline) * 100);
+      if (derivedPct > progress) progress = derivedPct;
+    }
+  }
+
+  setText("stat-fixed", String(fixed));
+  setText("stat-total", String(baseline));
+  setText("stat-progress", `${progress}%`);
+  const progressEl2 = document.getElementById("progress-bar") as any;
+  if (progressEl2 && progress > pct) {
+    progressEl2.value = progress;
+    progressEl2.displayValue = `${progress}%`;
+  }
   const commits = state.phases.filter((p) => p.commit).length;
   setText("stat-commits", String(commits));
 
@@ -666,7 +690,7 @@ function applyState(raw: unknown) {
 
   if (Array.isArray(state.phases)) {
     state.phases = state.phases.map((p, i) =>
-      normalizePhase(p as Record<string, unknown>, i)
+      normalizePhase(p as unknown as Record<string, unknown>, i)
     );
   }
 
@@ -707,9 +731,8 @@ function applyState(raw: unknown) {
 }
 
 // ── Live timer ────────────────────────────────────────────────────────────────
-// Elapsed counts up from startedAt, pauses on inactivity, never goes back.
-// The server value (elapsedSeconds) is ignored once the timer is running —
-// startedAt is the single source of truth.
+// Elapsed uses the server-owned startedAt and pauses on inactivity.
+// A new run replaces the anchor; elapsedSeconds is not a clock source.
 
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let timerStartedAt = 0;       // absolute ms timestamp when run began
@@ -727,12 +750,13 @@ function tickTimer() {
 }
 
 function startLiveTimer(startedAt: string, phaseStartedAt: string | null) {
-  if (phaseStartedAt) phaseTimerBase = new Date(phaseStartedAt).getTime();
-  // Only anchor startedAt on first start — never overwrite once running
-  if (!timerStartedAt) timerStartedAt = new Date(startedAt).getTime();
+  const nextStart = Date.parse(startedAt);
+  if (!Number.isFinite(nextStart)) { stopLiveTimer(); return; }
+  timerStartedAt = nextStart;
+  phaseTimerBase = phaseStartedAt ? Date.parse(phaseStartedAt) : 0;
   timerPausedAt = null;
-  if (timerInterval) return;
   tickTimer();
+  if (timerInterval) return;
   timerInterval = setInterval(tickTimer, 1000);
 }
 
@@ -752,7 +776,7 @@ function stopLiveTimer() {
 }
 
 function syncLiveTimer(_serverElapsed: number, phaseStartedAt: string | null) {
-  if (phaseStartedAt) phaseTimerBase = new Date(phaseStartedAt).getTime();
+  phaseTimerBase = phaseStartedAt ? Date.parse(phaseStartedAt) : 0;
 }
 
 // ── Standalone mode detection ────────────────────────────────────────────────
@@ -820,6 +844,7 @@ async function poll() {
 }
 
 function startPolling() {
+  if (polling) return;
   polling = true;
   poll();
 }
@@ -877,6 +902,7 @@ app.connect().then(async () => {
     } else if (state?.status === "completed") {
       showScreen("completed");
       renderCompleted(state);
+      startPolling();
       desktopInitDone = true;
     }
   } catch {
@@ -893,6 +919,7 @@ app.connect().then(async () => {
     } else if (restState?.status === "completed") {
       showScreen("completed");
       renderCompleted(restState);
+      startPolling();
     } else {
       showScreen("idle");
       startPolling();
@@ -915,6 +942,7 @@ app.connect().then(async () => {
   } else if (state?.status === "completed") {
     showScreen("completed");
     renderCompleted(state);
+    startPolling();
   } else {
     showScreen("idle");
     // Start polling even on idle — the agent may push "running" state via curl

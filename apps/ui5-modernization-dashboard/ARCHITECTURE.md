@@ -1,6 +1,6 @@
 # UI5 Modernization Dashboard — Architektur & Stand
 
-> Stand: 2026-10-22. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
+> Stand: 2026-11-03. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
 > zusammenspielen, welche Daten fließen und was die App heute kann.
 >
 > **Pflege-Konvention:** Bei jeder nennenswerten Änderung am Dashboard (Datenfluss,
@@ -27,10 +27,20 @@ beschreibt und die App liest.
 apps/ui5-modernization-dashboard/
 ├── main.ts                 # Server-Einstieg: HTTP- + stdio-Transport, Git-Polling, REST-API
 ├── server.ts               # MCP-Server-Fabrik: registriert Tools + UI-Resource
+├── state-store.ts          # Atomare State-Persistenz (~/.ui5-modernization-dashboard/state.json)
+├── state-schema.ts         # Zod-Schemas für State- und Update-Validierung
+├── server.test.ts          # Regressionstests (Widget-Tool-Count, Schema-Survival)
 ├── mcp-app.html            # UI-Grundgerüst (Screens, statische IDs)
 ├── src/
 │   ├── mcp-app.ts          # UI-Logik: State lesen, rendern, Live-Timer, Polling
 │   └── mcp-app.css         # Styling
+├── desktop-setup.mjs       # macOS Claude Desktop MCP-Registrierung (launchd-basiert, dependency-frei)
+├── desktop-setup-worker.mjs # launchd-Worker für desktop-setup
+├── desktop-setup.d.mts     # TypeScript-Deklarationen für desktop-setup
+├── desktop-setup.test.mjs  # Unit-Tests (11 Tests)
+├── scripts/
+│   ├── copy-to-plugin.mjs  # Artefakte nach plugins/ui5-modernization/dashboard/ kopieren
+│   └── test-desktop-setup-launchd.mjs  # Integrationstest (launchd end-to-end)
 ├── dist/                   # BUILD-OUTPUT (gitignored): gebündelte mcp-app.html (alles inline)
 ├── dist-server/            # BUILD-OUTPUT (gitignored): kompilierte main.js + server.js
 ├── vite.config.ts          # baut src/* + mcp-app.html → dist/mcp-app.html (single file)
@@ -42,9 +52,11 @@ apps/ui5-modernization-dashboard/
 
 ### 1. Der State (einzige Quelle der Wahrheit)
 
-Eine JSON-Datei unter **`/tmp/ui5-modernization-state.json`**. Alles, was das
-Dashboard zeigt, steht hier drin. Lesen/Schreiben passiert in `server.ts`
-(`readState`/`writeState`) und `main.ts` (Git-Polling).
+Eine JSON-Datei unter **`~/.ui5-modernization-dashboard/state.json`** (fester
+Home-Directory-Pfad, unabhängig von TMPDIR/Sandbox). Alles, was das Dashboard
+zeigt, steht hier drin. Lesen/Schreiben passiert über `state-store.ts` (atomare
+Writes via tmp+rename), `server.ts` (`writeState` für Timestamp-Management) und
+`main.ts` (Git-Polling).
 
 Wichtigste Felder (TypeScript-Schema: `ModernizationState` in `src/mcp-app.ts`):
 
@@ -89,10 +101,12 @@ Ein Node-Prozess, der in **zwei Modi** laufen kann — beide bedienen denselben 
 - `ALL /mcp` → MCP-Protokoll über HTTP
 
 **MCP-Tools** (`server.ts`, in beiden Modi verfügbar):
-- `get-status` — aktuellen State zurückgeben (öffnet das Panel)
-- `update-status` — Partial-State mergen (der Workflow pusht hierüber)
+- `open-dashboard` — Dashboard-Widget öffnen (einziges Tool mit `_meta.ui`); gibt aktuellen State zurück
+- `get-status` — aktuellen State lesen OHNE Widget zu öffnen (für Polling und Agent-Status-Checks)
+- `update-status` — Partial-State mergen (der Workflow pusht hierüber); Server verwaltet Zeitstempel (`startedAt`, `phaseStartedAt`, `completedAt`)
 - `reset-status` — State auf idle
 - `get-file` — eine .md-Datei per absolutem Pfad lesen (für die Markdown-Anzeige im Desktop)
+- `setup-desktop-dashboard` — (nur macOS, gated durch `enableDesktopSetup`-Flag) MCP-Server-Registrierung in Claude Desktop Config vorbereiten; launchd-Helper wartet auf User-Quit
 - Resource `ui://ui5-modernization/mcp-app.html` — die UI selbst
 
 ### 3. Die UI (`src/mcp-app.ts` + `mcp-app.html` + `mcp-app.css`)
@@ -136,9 +150,9 @@ Details unten im Feature-Stand).
 modernize-ui5-app Workflow (läuft in der Ziel-App)
    │  push_status  →  curl POST localhost:3001/mcp  →  MCP-Tool "update-status"
    ▼
-/tmp/ui5-modernization-state.json   ← EINZIGE Quelle der Wahrheit
-   ▲                                          ▲
-   │ Git-Polling (5 s, nur HTTP-Modus)        │ liest/merged
+~/.ui5-modernization-dashboard/state.json   ← EINZIGE Quelle der Wahrheit
+   ▲                                          ▲      (Home-Dir, nicht TMPDIR —
+   │ Git-Polling (5 s, nur HTTP-Modus)        │       geteilt über Sandbox-Grenzen)
 HTTP-Server :3001                      stdio-Server (Desktop)
    │ /api/status (1,5 s Poll)                 │ get-status (1,5 s Poll)
    ▼                                          ▼
@@ -217,18 +231,30 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 ## Integration & Auslieferung
 
 - Der Workflow (`plugins/ui5-modernization/skills/modernize-ui5-app/SKILL.md`)
-  startet den Server und pusht den Status. Der `install-dashboard`-Skill richtet
-  das Dashboard als MCP-Server in Claude Desktop ein (patcht heute
-  `claude_desktop_config.json`).
-- **Offener Punkt (bewusst verschoben):** Auslieferung des MCP-Servers über das
-  Plugin selbst (`.mcp.json`) statt Config-Patch — relevant erst für fremde Nutzer
-  ohne geklontes Repo, vor der Veröffentlichung. Details siehe Memory
-  `dashboard-mcp-plugin-delivery`.
+  startet den Server und pusht den Status.
+- **Desktop-Setup** ist im Server als `setup-desktop-dashboard`-MCP-Tool eingebaut
+  (nur macOS). Es kopiert Bundle-Artefakte nach `~/Library/Application Support/UI5
+  Modernization Dashboard/<profile>/runtime/`, registriert den MCP-Server-Eintrag in
+  `claude_desktop_config.json` und öffnet Claude erneut — alles über einen
+  launchd-Helper, der auf den User-Quit wartet.
+- **Plugin-Auslieferung:** Der MCP-Server wird self-contained über
+  `plugins/ui5-modernization/dashboard/` ausgeliefert (`.mcp.json`-Pfad:
+  `${CLAUDE_PLUGIN_ROOT}/dashboard/dist-server/main.js`). Nach jeder Änderung:
+  `npm run build && node scripts/copy-to-plugin.mjs`.
 
 ## Changelog
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-03 — Dashboard Rebuild (sauberer Neuaufbau)
+
+- **Anlass:** Aufgeschichtete Änderungen (teils von anderem Agenten) machten das Dashboard instabil. Statt Hinterherfixen: kontrollierter Neuaufbau ab committetem HEAD (b6116bd).
+- **State-Pfad** von TMPDIR auf `~/.ui5-modernization-dashboard/state.json` migriert (`state-store.ts`, atomare Writes). Server-verwaltete Zeitstempel (startedAt, phaseStartedAt, completedAt).
+- **Tool-Split:** `open-dashboard` (einziges Widget-Tool) + `get-status` (liest nur, kein Widget). Schemas statt passthrough().
+- **Desktop-Setup:** `setup-desktop-dashboard`-Tool (macOS, launchd-basiert). Locale-Bug in `processIdentity()` behoben (ps-Ausgabe war locale-abhängig).
+- **Frontend:** Kaputte Fullscreen-Erweiterung zurückgenommen; funktionierende Minimal-Form beibehalten. Polling-Idempotenz, vereinfachter Timer (server-owned startedAt), startPolling bei completed-Screen.
+- **Delivery:** `copy-to-plugin.mjs` kopiert jetzt auch desktop-setup-Artefakte + package.json.
 
 ### 2026-10-29 — Server self-contained ins Plugin (Delivery-Fix)
 

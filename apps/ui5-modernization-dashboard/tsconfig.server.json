@@ -4,8 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "allowJs": true,
     "outDir": "dist-server",
     "skipLibCheck": true
   },
-  "include": ["main.ts", "server.ts"]
+  "include": ["main.ts", "server.ts", "desktop-setup.mjs", "desktop-setup-worker.mjs"]
 }

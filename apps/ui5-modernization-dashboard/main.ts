@@ -12,6 +12,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { marked } from "marked";
 import { createServer } from "./server.js";
+import { readState, saveState, STATE_FILE } from "./state-store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,7 +20,6 @@ const _SERVER_FILE = fileURLToPath(import.meta.url);
 const PROJECT_DIR = _SERVER_FILE.endsWith(".ts")
   ? path.dirname(_SERVER_FILE)
   : path.resolve(path.dirname(_SERVER_FILE), "..");
-const STATE_FILE = path.join(process.env.TMPDIR || "/tmp", "ui5-modernization-state.json");
 
 // ── Git activity polling ──────────────────────────────────────────────────────
 
@@ -27,12 +27,6 @@ interface GitActivity {
   commits: Array<{ hash: string; message: string; ts: string }>;
   modifiedFiles: string[];
   lastPolledAt: string;
-}
-
-async function readState(): Promise<Record<string, unknown> | null> {
-  try {
-    return JSON.parse(await fs.readFile(STATE_FILE, "utf-8"));
-  } catch { return null; }
 }
 
 async function getGitActivity(projectPath: string, sinceIso: string): Promise<GitActivity> {
@@ -91,7 +85,7 @@ function startGitPolling() {
         : (state.lastGitActivityAt as string | undefined) ?? new Date().toISOString();
       // Merge into state — only update gitActivity fields, never overwrite agent fields
       const updated = { ...state, gitActivity: activity, lastGitActivityAt };
-      await fs.writeFile(STATE_FILE, JSON.stringify(updated, null, 2), "utf-8");
+      await saveState(updated);
     } catch { /* non-fatal */ }
   }, 5000);
 }
@@ -178,7 +172,7 @@ async function startStreamableHTTPServer(
   // REST API: reset dashboard to idle
   app.post("/api/reset", async (_req: Request, res: Response) => {
     stopGitPolling();
-    await fs.writeFile(STATE_FILE, JSON.stringify({ status: "idle" }, null, 2), "utf-8");
+    await saveState({ status: "idle" });
     res.json({ ok: true });
   });
 
@@ -242,7 +236,7 @@ async function startStdioServer(factory: () => McpServer): Promise<void> {
 
 async function main() {
   if (process.argv.includes("--stdio")) {
-    await startStdioServer(createServer);
+    await startStdioServer(() => createServer({ enableDesktopSetup: process.platform === "darwin" }));
   } else {
     await startStreamableHTTPServer(createServer);
   }

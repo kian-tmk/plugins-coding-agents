@@ -20,9 +20,9 @@ Phasen-Logik und kein Skill-Mapping entfernt.
 
 | Datei | Art | Umfang |
 |---|---|---|
-| `skills/install-dashboard/SKILL.md` | **neu** | 185 Zeilen |
 | `skills/modernize-ui5-app/SKILL.md` | **stark erweitert** | +596 Zeilen (additiv) |
 | `skills/modernize-ui5-app/references/documentation-templates.md` | kleine Präzisierung | ±4 Zeilen |
+| `dashboard/` | **Delivery-Artefakte** | gebündelte Server+UI+Desktop-Setup |
 
 ### Commits
 
@@ -75,14 +75,11 @@ abgelehnt oder ist es nicht verfügbar, läuft der Workflow normal weiter.
 - **Jetzt 6 Phasen.** Phase 6 „Documentation" ist als echte Phase formalisiert (`skills:[]`): schreibt `MODERNIZATION-ISSUES.md` + `MODERNIZATION-REPORT.md`, committet `docs: add modernization report and issues`, pusht final `status:"completed"`, `overallProgress:100`, `completedAt`, `deferredIssues`, Report-/Issues-Pfade. Die fünf Fix-Phasen unverändert: (1) Mechanical Baseline, (2) Foundation, (3) Module System & Globals, (4) Deprecated APIs, (5) CSP Compliance.
 - **Gate-Flow pro Phase:** `gateStatus:"running"` + `GATE_START` → Gate je Modus (Full autonomous: Test-Sub-Agent, 600000 ms Timeout, ≤3 Retries; Half autonomous: läuft, debuggt aber nie; Manual: keine Tests) → `gateStatus` passed/failed mit Dauer + Testzahlen + optionalem `gateNote`.
 
-## `install-dashboard/SKILL.md` — neu
+## `install-dashboard/SKILL.md` — entfernt
 
-Richtet das Dashboard als MCP-Server in Claude Desktop ein (patcht
-`claude_desktop_config.json`). Aufrufbar jederzeit per `/install-dashboard`. Struktur:
-- **Phase 0** — Voraussetzungen: Dashboard-Verzeichnis finden, Server ggf. bauen, Claude-Desktop-Config finden (bevorzugt `deploymentMode=3p`), prüfen ob bereits korrekt eingerichtet (idempotent).
-- **Phase 1** — Nutzer per `AskUserQuestion` bestätigen lassen (Einrichten/Abbrechen).
-- **Phase 2** — Config patchen (python3, nur den `ui5-modernization-dashboard`-Eintrag, alles andere unberührt).
-- **Phase 3** — Abschluss mit konkreter Anleitung (Neustart → neuer Chat → nach Status fragen).
+> Der Skill wurde in Commit `1c51f08` entfernt. Desktop-Setup ist jetzt als
+> `setup-desktop-dashboard`-MCP-Tool direkt in den Dashboard-Server eingebaut
+> (macOS, launchd-basiert). Siehe `apps/ui5-modernization-dashboard/ARCHITECTURE.md`.
 
 ## `references/documentation-templates.md` — kleine Präzisierung
 
@@ -105,6 +102,15 @@ explizite Beispiele (echter Modellname, Datum im `YYYY-MM-DD`-Format) statt gene
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Plugin-Änderung.
 > Format: `### JJJJ-MM-TT — Titel`, darunter kurze Stichpunkte, gern mit Commit-Hash.
+
+### 2026-11-03 — Dashboard-Rebuild: State, Tool-Split, Desktop-Setup
+
+- **Dashboard-Neuaufbau** ab committetem HEAD (b6116bd). Kaputte Fullscreen-Erweiterung zurückgenommen, funktionierende Minimal-Form beibehalten.
+- **State-Pfad** von TMPDIR auf `~/.ui5-modernization-dashboard/state.json` migriert (state-store.ts, atomare Writes).
+- **Tool-Split:** `open-dashboard` (einziges Widget-Tool) + `get-status` (liest nur). Schemas statt passthrough().
+- **Desktop-Setup:** `setup-desktop-dashboard`-Tool (macOS, launchd). Locale-Bug in processIdentity() behoben.
+- **Delivery:** copy-to-plugin.mjs kopiert jetzt auch desktop-setup-Artefakte + package.json.
+- **install-dashboard-Skill** bleibt entfernt (war seit 1c51f08 weg); Desktop-Setup ist jetzt ein MCP-Tool im Server.
 
 ### 2026-10-29 — Dashboard-Server self-contained ins Plugin (Delivery-Fix)
 - **Problem:** `.mcp.json` zeigte mit `${CLAUDE_PLUGIN_ROOT}/../../apps/...` aus dem Plugin heraus — ein `..`-Pfad verletzt die Plugin-Containment-Regel (`claude plugin validate` schlägt fehl) und lädt bei echter Marketplace-Installation nicht; zudem auf gitignorte `dist*`-Artefakte.

@@ -103,7 +103,7 @@ Read `references/build-and-test-commands.md`. Chrome DevTools MCP must be connec
 
 The UI5 Modernization Dashboard shows live progress. The workflow **detects the host** and offers the matching view — the user is asked only one, host-appropriate question:
 - **CLI** (`CLAUDE_CODE_ENTRYPOINT=cli`) → dashboard in the **browser** (`http://localhost:3001`).
-- **Claude Code Desktop** (`CLAUDE_CODE_ENTRYPOINT` ≠ `cli`, e.g. `claude-desktop-3p`) → dashboard as a **native inline widget** (the plugin's MCP server is loaded by the host).
+- **Claude Code Desktop** (`CLAUDE_CODE_ENTRYPOINT` ≠ `cli`, e.g. `claude-desktop-3p`) → dashboard as a **native inline widget**. **IMPORTANT:** The desktop host renders widgets **only** for MCP servers registered in `claude_desktop_config.json` (app-config servers) — NOT for plugin-loaded servers. The plugin loads the dashboard server so that tools like `update-status` and `get-status` work, but for the widget to render, the server must ALSO be registered in the app config. The `setup-desktop-dashboard` tool handles this registration.
 
 **Both views are fed the same way:** live updates are pushed through the **`update-status` MCP tool** (no HTTP, no port, no curl) — the dashboard server writes the state file inside its own process, reached over the already-open stdio MCP connection. This works identically in CLI and Desktop. The HTTP server on `:3001` is started **only in the CLI case**, and only to *serve the browser page* — not for pushing status. In the Desktop case no server and no port are needed (and the sandbox blocks port binding anyway); the host already loads the dashboard MCP server over stdio. Only the *display* differs (browser tab vs. native widget).
 
@@ -138,15 +138,52 @@ Call `AskUserQuestion` with exactly one question, matching `DASHBOARD_HOST`. Do 
 
 → If **Ja**: execute Steps 1–4 (server start + open the matching view), then go directly to the verification mode question.
 
+#### Step 0D: Desktop app-config registration (Desktop only — before Steps 1–4)
+
+**This step applies ONLY when `DASHBOARD_HOST=desktop` and the user answered Ja.** Skip it entirely for CLI.
+
+The desktop host renders MCP App widgets **only** for servers registered in `claude_desktop_config.json` — plugin-loaded servers can receive tool calls but their widgets are NOT rendered. Before opening the dashboard widget, you MUST ensure the server is registered in the app config.
+
+**Check** whether the dashboard server is already registered by calling the `setup-desktop-dashboard` tool (server `plugin_ui5-modernization_ui5-modernization-dashboard`) with the appropriate profile. The tool inspects the config and returns one of:
+
+- `status: "configured"` → the server is already registered. Proceed to Step 4 (skip Steps 1–3 — no HTTP server needed in Desktop).
+- `status: "waiting-for-quit"` → the registration is prepared. Tell the user:
+
+  > Das Dashboard wird eingerichtet. Beende Claude einmal vollständig mit **⌘Q**. Die Einrichtung wird abgeschlossen und Claude automatisch wieder geöffnet — mit einem vorbereiteten Fortsetzungs-Chat.
+
+  Then **stop**. Do not proceed with the workflow. The launchd helper will register the server, reopen Claude, and open a continuation chat. The workflow resumes from there.
+
+- An error (e.g. "Expected one running Claude Desktop application") → tell the user and fall back to `DASHBOARD=false`. Continue without the dashboard.
+
+**Profile detection:** Use `claude-3p` when the entrypoint contains `3p` (e.g. `claude-desktop-3p`), otherwise use `claude`.
+
+```bash
+if [ "$DASHBOARD_HOST" = "desktop" ]; then
+  case "$CLAUDE_CODE_ENTRYPOINT" in
+    *3p*) DESKTOP_PROFILE="claude-3p" ;;
+    *)    DESKTOP_PROFILE="claude" ;;
+  esac
+fi
+```
+
+Call the tool with `profile` set to `$DESKTOP_PROFILE`, and optionally `projectPath` (the current project directory) and `resumeContext` (any already-agreed constraints like the verification mode) so the continuation chat picks up where you left off.
+
+**IMPORTANT — common mistakes to avoid in Step 0D:**
+- Do NOT skip this step for Desktop — without app-config registration the widget will not render, even though the tool calls work fine (they go through the plugin server)
+- Do NOT manually edit `claude_desktop_config.json` — the `setup-desktop-dashboard` tool handles this safely (backup, atomic write, SHA verification)
+- Do NOT proceed with the workflow after `waiting-for-quit` — the user must quit Claude first
+- If the tool returns `configured`, you can go straight to Step 4 (reset + open-dashboard) — Steps 1–3 are CLI-only
+
 #### Steps 1–4: Server starten und Ansicht öffnen
 
-(See below.) Only run these if the user answered **Ja** to Schritt A. The HTTP server is started in **both** host cases; Step 4 opens the browser (cli) or the native widget (desktop).
+(See below.) Only run these if the user answered **Ja** to Schritt A. Steps 1–3 are **CLI only** (resolve dir, build, start HTTP server). Desktop skips Steps 1–3 entirely (the server is plugin-loaded + app-config registered via Step 0D) and goes straight to Step 4.
 
 **IMPORTANT — common mistakes to avoid:**
 - Do NOT bundle Schritt A and the verification mode into one `AskUserQuestion` call
 - Do NOT start the HTTP server / bind :3001 in the desktop case — it is blocked by the sandbox and not needed; status flows through the `update-status` MCP tool
+- Do NOT call `open-dashboard` in the desktop case without first ensuring the server is app-config registered (Step 0D) — the widget will not render otherwise
 - Push status via the `update-status` MCP tool in BOTH hosts — never via curl to :3001
-- The next question after Schritt A (and Steps 1–4, if **Ja**) is always the verification mode — not another dashboard question
+- The next question after Schritt A (and Steps 0D/1–4, if **Ja**) is always the verification mode — not another dashboard question
 
 If the user answered **Ja** to Schritt A, execute the following steps in order, then proceed to the verification mode question:
 
@@ -217,7 +254,9 @@ fi
 
 **Both hosts:** after resetting, deliver the first state via the `update-status` MCP tool (see the push convention below).
 
-**Desktop only (`DASHBOARD_HOST=desktop`):** open the native widget by calling the dashboard MCP tool **`get-status`** (server `ui5-modernization-dashboard`) once here. That tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline. (The CLI case needs no such call — the browser tab is the view.)
+**Desktop only (`DASHBOARD_HOST=desktop`):** open the native widget by calling the **`open-dashboard`** tool on the **app-config registered** `ui5-modernization-dashboard` server (NOT the `plugin_ui5-modernization_ui5-modernization-dashboard` server — that is the plugin-loaded instance whose widgets are not rendered by the host). The `open-dashboard` tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline. For subsequent status checks, use `get-status` instead — it reads without opening another widget. (The CLI case needs no such call — the browser tab is the view.)
+
+> **Why two servers?** The plugin loads its own instance (`plugin_ui5-modernization_...`) — it handles tool calls but its widgets don't render. Step 0D registers a second instance (`ui5-modernization-dashboard`) in the app config — that one renders widgets. Both share the same state file (`~/.ui5-modernization-dashboard/state.json`), so updates via either server are visible in the widget. Use the app-config server name for `open-dashboard`; use either server for `update-status`/`get-status`.
 
 After the dashboard setup, define the timer helpers used throughout the skill:
 
