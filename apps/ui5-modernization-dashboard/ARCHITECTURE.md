@@ -62,11 +62,11 @@ Wichtigste Felder (TypeScript-Schema: `ModernizationState` in `src/mcp-app.ts`):
 
 | Feld | Bedeutung |
 |---|---|
-| `status` | `"idle"` \| `"running"` \| `"completed"` — steuert, welcher Screen gezeigt wird |
+| `status` | `"idle"` \| `"running"` \| `"completed"` \| `"stopped"` — steuert, welcher Screen gezeigt wird |
 | `project`, `projectPath`, `ui5Version`, `verificationMode`, `workingTreeStatus` | Preflight-Infos im Kopf |
 | `linterBaseline`, `totalFindings`, `findingsFixed`, `findingsRemaining` | Finding-Zähler |
 | `currentPhase`, `currentActivity`, `overallProgress` | aktueller Fortschritt |
-| `startedAt`, `phaseStartedAt`, `completedAt`, `elapsedSeconds` | Zeitanker für die Timer |
+| `startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`, `elapsedSeconds` | Zeitanker für die Timer |
 | `phases[]` | die 6 Phasen (siehe unten) |
 | `deferredIssues[]` | zurückgestellte Findings (Completed-Screen) |
 | `reportPath`, `issuesPath` | absolute Pfade zu MODERNIZATION-REPORT.md / -ISSUES.md |
@@ -103,15 +103,17 @@ Ein Node-Prozess, der in **zwei Modi** laufen kann — beide bedienen denselben 
 **MCP-Tools** (`server.ts`, in beiden Modi verfügbar):
 - `open-dashboard` — Dashboard-Widget öffnen (einziges Tool mit `_meta.ui`); gibt aktuellen State zurück
 - `get-status` — aktuellen State lesen OHNE Widget zu öffnen (für Polling und Agent-Status-Checks)
-- `update-status` — Partial-State mergen (der Workflow pusht hierüber); Server verwaltet Zeitstempel (`startedAt`, `phaseStartedAt`, `completedAt`)
+- `update-status` — Partial-State mergen (der Workflow pusht hierüber); Server verwaltet Zeitstempel (`startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`)
 - `reset-status` — State auf idle
+- `stop-status` — Run als gestoppt markieren (`status:"stopped"`), dabei Fortschrittsdaten erhalten (Phasen, Findings, deferred Issues). Für User-Abbruch, nicht für `reset`
+- `reset-app` — Gesamten Modernisierungslauf rückgängig machen: verwirft uncommitted Changes auf dem Work-Branch (`git checkout . && git clean -fd`), wechselt zurück auf den Original-Branch, setzt Dashboard auf idle. Optional: Work-Branch löschen (`removeWorkBranch: true`)
 - `get-file` — eine .md-Datei per absolutem Pfad lesen (für die Markdown-Anzeige im Desktop)
 - `setup-desktop-dashboard` — (nur macOS, gated durch `enableDesktopSetup`-Flag) MCP-Server-Registrierung in Claude Desktop Config vorbereiten; launchd-Helper wartet auf User-Quit
 - Resource `ui://ui5-modernization/mcp-app.html` — die UI selbst
 
 ### 3. Die UI (`src/mcp-app.ts` + `mcp-app.html` + `mcp-app.css`)
 
-Eine Single-Page-App mit drei Screens, umgeschaltet nach `state.status`.
+Eine Single-Page-App mit vier Screens, umgeschaltet nach `state.status`.
 Seit 2026-10-22 nutzt die gesamte UI **UI5 Web Components** (`@ui5/webcomponents`,
 `@ui5/webcomponents-fiori`, `@ui5/webcomponents-icons`). Die Controls werden als
 ES-Module importiert (keine `Assets.js`); beide Themes (`sap_horizon`, `sap_horizon_dark`)
@@ -246,6 +248,16 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-04 — stop-status, reset-app Tools + Stopped-Screen
+
+- **`stop-status`-Tool:** Markiert den Lauf als `"stopped"` (mit optionalem `reason`), erhält dabei alle Fortschrittsdaten (Phasen, Findings, deferred Issues). Server setzt `stoppedAt`-Timestamp.
+- **`reset-app`-Tool:** Setzt die gesamte Modernisierung zurück — verwirft uncommitted Changes auf dem Work-Branch (`git checkout . && git clean -fd`), wechselt auf den Original-Branch zurück, setzt Dashboard auf idle. Behebt den Bug, bei dem modifizierte Dateien beim Branch-Wechsel auf den Original-Branch mitgenommen wurden.
+- **Stopped-Screen** im Frontend (vierter Screen neben Idle/Running/Completed): zeigt Stop-Grund, bisherige Phasen und Reset-Button.
+- **Fullscreen-Logik** im TS bereit (syncs `availableDisplayModes` aus Host-Context), aber Buttons nicht im HTML — blockiert durch 3P Feature-Gate `513873720` (`epitaxyMcpAppPane`). Kommentar im Code dokumentiert Wiederaktivierung.
+- **No-Cache Meta-Tags** in `mcp-app.html`.
+- **SKILL.md:** `reset-app`-Tool dokumentiert; Agent darf Reset nie manuell per Git machen.
+- Commit `efe2261`.
 
 ### 2026-11-03 — Dashboard Rebuild (sauberer Neuaufbau)
 
