@@ -29,8 +29,9 @@ Das Dashboard läuft auf allen drei Claude-Plattformen:
 |---|---|---|---|
 | **Claude Code CLI** | Terminal | Browser auf `localhost:3001` | `update-status` MCP-Tool |
 | **Claude Code Desktop** | Claude Desktop App (3P-Profil), Code-Modus | Natives Inline-Widget (MCP App im iframe) | `update-status` MCP-Tool |
+| **Claude Cowork** | Claude Desktop App (3P-Profil), Cowork-Modus | Natives Inline-Widget (MCP App im iframe) | `update-status` MCP-Tool |
 
-**Claude Cowork** (Cowork-Modus in der Desktop App) wird nicht unterstützt — kein `/mcp`, keine Plugin-Tools, kein MCP-App-Rendering. Das Dashboard ist ausschließlich für die Code-Plattformen gebaut.
+Claude Code Desktop und Cowork laufen beide in der Claude Desktop App und teilen dieselbe `claude_desktop_config.json` unter `~/Library/Application Support/Claude-3p/`. Ein dort registrierter Dashboard-Server ist in beiden Modi verfügbar.
 
 CLI und Desktop teilen dieselbe `claude_desktop_config.json` unter `~/Library/Application Support/Claude-3p/`.
 
@@ -346,7 +347,7 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 - **Zwei konsolidierte Anzeige-Wege** (beide aus derselben Plugin-`.mcp.json`, kein separates Setup): CLI → Dashboard im Browser (`localhost:3001`, Workflow startet den HTTP-Server automatisch); Claude Code Desktop → natives Inline-Panel, alternativ Browser. Beide teilen denselben State-File `/tmp/ui5-modernization-state.json`.
 - **Workflow `modernize-ui5-app`:** die „Claude Desktop-Frage" (Schritt B inkl. Config-Detection und `/install-dashboard`-Aufruf) entfällt; nach der Dashboard-Frage (Schritt A) + Server-Start folgt direkt die Verification-Mode-Frage.
 - **Hinweis zur früheren „deferred delivery"-Notiz** (unten, Abschnitt „Integration & Auslieferung"): die `.mcp.json`-Auslieferung ist umgesetzt. Verbleibender echter Blocker für fremde Nutzer: `.mcp.json` zeigt auf das gitignored `dist-server/` — nach frischem Clone fehlt der Build. Separat zu lösen.
-- **Cowork** bewusst ausgeklammert (kein typischer Entwickler-Host, kein `/mcp`).
+- **Cowork** nutzt dieselbe `claude_desktop_config.json` wie Code Desktop — Dashboard-Widget ist dort ebenfalls verfügbar.
 
 ### 2026-10-28 — Responsive Layout, Phase-Summary-Alignment, Desktop-Höhen-Fixes
 
