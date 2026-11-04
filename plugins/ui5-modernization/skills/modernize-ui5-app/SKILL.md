@@ -298,8 +298,20 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 | After autofix / linter re-run | `findingsFixed`, `findingsRemaining`, `overallProgress`, `currentActivity` |
 | Each phase ends (after commit) | phase N `status:"completed"`, `findingsAfter`, `filesChanged`, `commit`, `commitMessage`, `durationSeconds`, `findingsFixed`, `findingsRemaining`, `overallProgress` |
 | Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
+| User stops the run early | Call the **`stop-status`** tool (optional `reason`) — do NOT push `status:"completed"`. Preserves remaining findings, phases and deferred issues on the end screen. |
+| User asks to reset/undo | Call the **`reset-app`** tool — discards uncommitted changes, switches back to original branch, resets dashboard to idle. Never do manual git checkout/branch -D. |
 
 **Rule:** push `currentActivity` whenever the agent switches tasks — before launching a sub-agent, after it returns, before running the linter, before committing. Every meaningful action should be visible in the dashboard within seconds.
+
+**Stopping early (user asks to stop/abort mid-run):** This is a specific, mandatory procedure — do NOT just end your turn, and do NOT call `reset-status` (that wipes the dashboard to idle and loses the stop context). Do exactly this, in order:
+
+1. Stop any running sub-agent / background work first.
+2. Call the **`stop-status`** MCP tool with a short `reason` (e.g. `{"reason":"Durch Nutzer gestoppt"}`). This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
+3. Tell the user the run is stopped, which branch the work is on (`workBranch`), and that they can reset to `originalBranch` from the dashboard or by asking you.
+
+Never push `status:"completed"` or `status:"idle"` for a user stop. It is fire-and-forget like the other pushes.
+
+**Resetting (user asks to undo/reset the modernization):** Call the **`reset-app`** MCP tool (on the `ui5-modernization-dashboard` server). It reads `originalBranch`, `workBranch` and `projectPath` from the stored state, discards all uncommitted changes on the work branch (`git checkout . && git clean -fd`), switches back to `originalBranch`, and resets the dashboard to idle. Pass `{"removeWorkBranch": true}` to also delete the work branch. **Do NOT implement the reset manually** (no manual `git checkout main`, no manual `git branch -D`) — always use the tool, it handles edge cases and cleanup correctly.
 
 **Critical — phase object must be fully updated on completion:** When a phase ends, the `phases` array must contain the updated phase object with all fields filled in (`status:"completed"`, `findingsAfter`, `filesChanged`, `commit`, `commitMessage`, `durationSeconds`). A push that only updates top-level fields like `findingsFixed` without updating the phase object will show `0 commits` and stale stats in the dashboard. Use python3 to mutate the phase in `$PHASES_JSON` before every phase-completion push (see Phase 1 example).
 
@@ -312,7 +324,7 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 
 ## Git Commit Strategy
 
-One commit per phase, five total (plus documentation). Stage only files modified in that phase — never `git add -A`.
+The run works on a dedicated `ui5-modernization-*` branch (created in Step 1.0); the user's original branch stays untouched and serves as the backup. On success, the user merges the branch into their original branch; to abort, the dashboard reset switches back to it. One commit per phase, five total (plus documentation). Stage only files modified in that phase — never `git add -A`.
 
 **Never stage:** `headless-chrome.json`, `pom.xml` (dev profile patch), `.gitignore` (local test infra).
 
@@ -329,6 +341,30 @@ Skip commit if phase makes no changes.
 
 ## Phase 1: Mechanical Baseline
 
+### Step 1.0: Create the modernization branch
+
+Before any changes, move onto a dedicated branch so the user's original branch stays untouched. This is the backup: a reset is just a switch back, never a destructive `git reset`. Capture both branch names for the dashboard.
+
+```bash
+if git -C "$PROJECT_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  ORIGINAL_BRANCH=$(git -C "$PROJECT_PATH" rev-parse --abbrev-ref HEAD)
+  WORK_BRANCH="ui5-modernization-$(date +%Y%m%d-%H%M%S)"
+  git -C "$PROJECT_PATH" checkout -b "$WORK_BRANCH"
+else
+  ORIGINAL_BRANCH=""
+  WORK_BRANCH=""
+fi
+# Persist the branch names so later steps (and the stop/reset flow) can read them
+# even though each bash call is a fresh shell — $ORIGINAL_BRANCH does NOT survive
+# between tool calls, so a file is the only reliable carrier.
+printf '%s\n%s\n' "$ORIGINAL_BRANCH" "$WORK_BRANCH" > "${TMPDIR:-/tmp}/ui5-modernization-branches.txt"
+cat "${TMPDIR:-/tmp}/ui5-modernization-branches.txt"
+```
+
+Not a git repo (or `$PROJECT_PATH` unknown) → leave both empty; the dashboard reset then declines cleanly instead of touching git. Any uncommitted changes travel onto the new branch with the checkout — that is fine. All phase commits below land on `$WORK_BRANCH`.
+
+**Carry these two values forward.** `originalBranch` and `workBranch` MUST be present in the first `update-status` call (next step) and are what lets the dashboard show the reset button. Because bash variables do not survive between tool calls, read them back from the file above (line 1 = originalBranch, line 2 = workBranch) whenever you build a status payload directly. Omitting them silently disables reset.
+
 ### Step 1.1: Initial Analysis
 
 ```bash
@@ -338,10 +374,12 @@ grep -c " error \| warning " "${TMPDIR:-/tmp}/ui5-linter-baseline.txt" || echo "
 
 Parse: total errors/warnings, grouped by rule ID and file. Store for final comparison.
 
-Push initial dashboard state after parsing the baseline:
+Push initial dashboard state after parsing the baseline. Read the two branch names back from the file written in Step 1.0 (they are not in this shell's variables yet):
 
 ```bash
-push_status "{\"status\":\"running\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"ui5Version\":\"$UI5_VERSION\",\"verificationMode\":\"$VERIFICATION_MODE\",\"linterBaseline\":$BASELINE_COUNT,\"totalFindings\":$BASELINE_COUNT,\"findingsFixed\":0,\"findingsRemaining\":$BASELINE_COUNT,\"currentPhase\":0,\"overallProgress\":0,\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
+ORIGINAL_BRANCH=$(sed -n '1p' "${TMPDIR:-/tmp}/ui5-modernization-branches.txt" 2>/dev/null)
+WORK_BRANCH=$(sed -n '2p' "${TMPDIR:-/tmp}/ui5-modernization-branches.txt" 2>/dev/null)
+push_status "{\"status\":\"running\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"ui5Version\":\"$UI5_VERSION\",\"verificationMode\":\"$VERIFICATION_MODE\",\"originalBranch\":\"$ORIGINAL_BRANCH\",\"workBranch\":\"$WORK_BRANCH\",\"linterBaseline\":$BASELINE_COUNT,\"totalFindings\":$BASELINE_COUNT,\"findingsFixed\":0,\"findingsRemaining\":$BASELINE_COUNT,\"currentPhase\":0,\"overallProgress\":0,\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"phases\":$PHASES_JSON}"
 ```
 
 Where `$PHASES_JSON` is the phases array with all phases set to `"status":"pending"`, built from the linter output.

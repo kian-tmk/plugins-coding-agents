@@ -14,10 +14,12 @@ const phaseSchema = z.object({
 }).partial().passthrough();
 
 export const stateSchema = z.object({
-  runId: z.string(), status: z.enum(["idle", "running", "completed"]),
+  runId: z.string(), status: z.enum(["idle", "running", "completed", "stopped"]),
   project: z.string(), projectPath: z.string(), ui5Version: z.string(), model: z.string(),
   verificationMode: z.string(), buildCommand: z.string(), testCommand: z.string(),
   workingTreeStatus: z.string(), linterBaseline: z.number(), totalFindings: z.number(),
+  originalBranch: z.string().nullable().describe("Branch the user was on at start; the reset target."),
+  workBranch: z.string().nullable().describe("Dedicated modernization branch the run commits to."),
   findingsFixed: z.number(), findingsRemaining: z.number(), currentPhase: z.number(),
   currentActivity: z.string(), elapsedSeconds: z.number(), overallProgress: z.number(),
   phases: z.array(phaseSchema),
@@ -27,6 +29,8 @@ export const stateSchema = z.object({
   reportPath: z.string(), issuesPath: z.string(),
   startedAt: z.string().nullable().describe("Server-managed run start time; omit from updates."),
   completedAt: z.string().nullable().describe("Server-managed completion time; omit from updates."),
+  stoppedAt: z.string().nullable().describe("Server-managed stop time; omit from updates."),
+  stopReason: z.string().nullable().describe("Free-text reason why the run was stopped early."),
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   lastGitActivityAt: z.string().nullable(),
   gitActivity: z.object({
@@ -37,6 +41,6 @@ export const stateSchema = z.object({
 
 export const updateSchema = stateSchema.refine(
   value => Object.keys(value).some(key => key in stateSchema.shape
-    && !["startedAt", "phaseStartedAt", "completedAt"].includes(key)),
+    && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt"].includes(key)),
   "Supply at least one writable modernization status field. Empty or clock-only updates are not saved.",
 );

@@ -54,6 +54,8 @@ import "@ui5/webcomponents/dist/ProgressIndicator.js";
 import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Tools.js";
 import "@ui5/webcomponents-icons/dist/sys-enter-2.js";
+import "@ui5/webcomponents-icons/dist/process.js";
+import "@ui5/webcomponents-icons/dist/accept.js";
 import "@ui5/webcomponents-icons/dist/alert.js";
 import "@ui5/webcomponents-icons/dist/error.js";
 import "@ui5/webcomponents-icons/dist/document.js";
@@ -114,7 +116,7 @@ interface GitActivity {
 
 interface ModernizationState {
   runId: string;
-  status: "idle" | "running" | "completed";
+  status: "idle" | "running" | "completed" | "stopped";
   project: string;
   projectPath: string;
   ui5Version: string;
@@ -123,6 +125,8 @@ interface ModernizationState {
   buildCommand: string;
   testCommand: string;
   workingTreeStatus: string;
+  originalBranch: string | null;
+  workBranch: string | null;
   linterBaseline: number;
   totalFindings: number;
   findingsFixed: number;
@@ -137,6 +141,8 @@ interface ModernizationState {
   issuesPath: string;
   startedAt: string | null;
   completedAt: string | null;
+  stoppedAt: string | null;
+  stopReason: string | null;
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
@@ -558,7 +564,21 @@ function renderCompleted(state: ModernizationState) {
   const commits = state.phases.filter((p) => p.commit).length;
   const totalFiles = state.phases.reduce((s, p) => s + (p.filesChanged ?? 0), 0);
 
-  setText("completed-sub", `${state.linterBaseline} findings resolved across ${commits} commits in ${elapsed}`);
+  const stopped = state.status === "stopped";
+  const baseline = state.linterBaseline ?? 0;
+  const fixed = state.findingsFixed ?? Math.max(baseline - (state.findingsRemaining ?? baseline), 0);
+  const remaining = state.findingsRemaining ?? Math.max(baseline - fixed, 0);
+
+  // Header: switch title/icon/subline between a completed and a user-stopped run.
+  setText("completed-title", stopped ? "Modernization Stopped" : "Modernization Complete");
+  const headerIcon = document.getElementById("completed-icon");
+  if (headerIcon) headerIcon.setAttribute("name", stopped ? "process" : "sys-enter-2");
+  if (stopped) {
+    const reason = state.stopReason?.trim() || "Durch Nutzer gestoppt";
+    setText("completed-sub", `${reason} — ${remaining} findings remaining, ${fixed} resolved in ${elapsed}`);
+  } else {
+    setText("completed-sub", `${baseline} findings resolved across ${commits} commits in ${elapsed}`);
+  }
 
   // Stats
   const statsEl = document.getElementById("completed-stats")!;
@@ -567,11 +587,20 @@ function renderCompleted(state: ModernizationState) {
       <div class="completed-stat-inner">
         <ui5-icon name="task" class="completed-stat-icon"></ui5-icon>
         <div>
-          <div class="completed-stat-value positive">${state.linterBaseline}</div>
-          <div class="completed-stat-label">findings resolved</div>
+          <div class="completed-stat-value ${stopped ? "" : "positive"}">${stopped ? remaining : baseline}</div>
+          <div class="completed-stat-label">${stopped ? "findings remaining" : "findings resolved"}</div>
         </div>
       </div>
     </ui5-card>
+    ${stopped ? `<ui5-card class="completed-stat">
+      <div class="completed-stat-inner">
+        <ui5-icon name="accept" class="completed-stat-icon"></ui5-icon>
+        <div>
+          <div class="completed-stat-value positive">${fixed}</div>
+          <div class="completed-stat-label">findings resolved</div>
+        </div>
+      </div>
+    </ui5-card>` : ""}
     <ui5-card class="completed-stat">
       <div class="completed-stat-inner">
         <ui5-icon name="document" class="completed-stat-icon"></ui5-icon>
@@ -630,7 +659,9 @@ function renderCompleted(state: ModernizationState) {
   // Links to report and issues files
   const linksEl = document.getElementById("completed-links")!;
 
-  function linkCard(filePath: string, title: string, icon: string, sub: string) {
+  function linkCard(filePath: string | null | undefined, title: string, icon: string, sub: string) {
+    // A stopped/partial run may not have written the report or issues file yet.
+    if (!filePath) return "";
     const reportFile = filePath.split("/").pop() ?? "";
     const download = standaloneMode
       ? `http://localhost:3001/files/${encodeURIComponent(reportFile)}`
@@ -660,6 +691,65 @@ function renderCompleted(state: ModernizationState) {
       openMarkdown(p, t);
     });
   });
+
+  // Reset: only offered when the run recorded a dedicated modernization branch.
+  const resetEl = document.getElementById("completed-reset")!;
+  if (state.workBranch && state.originalBranch) {
+    resetEl.innerHTML = `
+      <div class="reset-note">
+        Modernization ran on <code>${escapeHtml(state.workBranch)}</code>.
+        Reset switches <code>${escapeHtml(state.projectPath?.split("/").pop() ?? "the project")}</code>
+        back to <code>${escapeHtml(state.originalBranch)}</code>; your work stays on the branch as a backup.
+      </div>
+      <ui5-button id="btn-reset-app" icon="history" design="Transparent">Reset app to original state</ui5-button>`;
+    const btn = document.getElementById("btn-reset-app");
+    btn?.addEventListener("click", () => resetApp(state));
+  } else {
+    resetEl.innerHTML = "";
+  }
+}
+
+// Switch the repository back to the original branch, undoing the whole run.
+// Standalone/CLI → REST; Desktop → MCP tool. Work branch is kept as a backup.
+async function resetApp(state: ModernizationState) {
+  const ok = window.confirm(
+    `Reset the app to its original state?\n\n`
+    + `The repository will switch back to "${state.originalBranch}".\n`
+    + `Your modernization work stays on "${state.workBranch}" as a backup.`,
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById("btn-reset-app") as any;
+  if (btn) { btn.disabled = true; }
+
+  try {
+    let message = "";
+    let failed = false;
+    if (standaloneMode) {
+      const res = await fetch("http://localhost:3001/api/reset-app", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      failed = !res.ok || data?.ok === false;
+      message = data?.message ?? `HTTP ${res.status}`;
+    } else {
+      const result = await app.callServerTool({ name: "reset-app", arguments: {} }) as any;
+      failed = result?.isError === true;
+      message = result?.content?.[0]?.text ?? "";
+    }
+    if (failed) {
+      window.alert(`Reset not performed.\n\n${message}`);
+      if (btn) { btn.disabled = false; }
+      return;
+    }
+    // Success: server set state to idle — reflect it immediately.
+    showScreen("idle");
+  } catch (err) {
+    window.alert(`Reset failed.\n\n${String(err)}`);
+    if (btn) { btn.disabled = false; }
+  }
 }
 
 // ── State handling ────────────────────────────────────────────────────────────
@@ -732,6 +822,10 @@ function applyState(raw: unknown) {
       showScreen("completed");
       renderCompleted(state);
     }
+  } else if (state.status === "stopped") {
+    stopLiveTimer();
+    showScreen("completed");
+    renderCompleted(state);
   }
 
   lastStatus = state.status;
@@ -875,7 +969,7 @@ fetchRestStatus().then((state) => {
   if (state?.status === "running") {
     showScreen("dashboard");
     renderDashboard(state);
-  } else if (state?.status === "completed") {
+  } else if (state?.status === "completed" || state?.status === "stopped") {
     showScreen("completed");
     renderCompleted(state);
   }
@@ -901,7 +995,7 @@ app.connect().then(async () => {
       renderDashboard(state);
       startPolling();
       desktopInitDone = true;
-    } else if (state?.status === "completed") {
+    } else if (state?.status === "completed" || state?.status === "stopped") {
       showScreen("completed");
       renderCompleted(state);
       startPolling();
@@ -918,7 +1012,7 @@ app.connect().then(async () => {
       showScreen("dashboard");
       renderDashboard(restState);
       startPolling();
-    } else if (restState?.status === "completed") {
+    } else if (restState?.status === "completed" || restState?.status === "stopped") {
       showScreen("completed");
       renderCompleted(restState);
       startPolling();
@@ -937,7 +1031,7 @@ app.connect().then(async () => {
     showScreen("dashboard");
     renderDashboard(state);
     startPolling();
-  } else if (state?.status === "completed") {
+  } else if (state?.status === "completed" || state?.status === "stopped") {
     showScreen("completed");
     renderCompleted(state);
     startPolling();

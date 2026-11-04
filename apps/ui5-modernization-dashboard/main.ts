@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { marked } from "marked";
-import { createServer } from "./server.js";
+import { createServer, resetApp } from "./server.js";
 import { readState, saveState, STATE_FILE } from "./state-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -100,6 +100,8 @@ async function startStreamableHTTPServer(
   const port = parseInt(process.env.PORT ?? "3001", 10);
   const app = createMcpExpressApp({ host: "0.0.0.0" });
   app.use(cors());
+  // Parse JSON bodies for the REST API routes (e.g. /api/stop { reason }).
+  app.use("/api", express.json());
 
   // Serve the built MCP app UI at root
   app.get("/", async (_req: Request, res: Response) => {
@@ -174,6 +176,29 @@ async function startStreamableHTTPServer(
     stopGitPolling();
     await saveState({ status: "idle" });
     res.json({ ok: true });
+  });
+
+  // REST API: stop the run early, preserving progress (for a future dashboard button)
+  app.post("/api/stop", async (req: Request, res: Response) => {
+    stopGitPolling();
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
+    const existing = (await readState()) ?? {};
+    const alreadyStopped = existing.status === "stopped";
+    await saveState({
+      ...existing,
+      status: "stopped",
+      stopReason: reason,
+      stoppedAt: alreadyStopped ? existing.stoppedAt : new Date().toISOString(),
+    });
+    res.json({ ok: true });
+  });
+
+  // REST API: full app reset — switch the repo back to the original branch.
+  app.post("/api/reset-app", async (req: Request, res: Response) => {
+    stopGitPolling();
+    const removeWorkBranch = req.body?.removeWorkBranch === true;
+    const result = await resetApp({ removeWorkBranch });
+    res.status(result.ok ? 200 : 409).json(result);
   });
 
   app.all("/mcp", async (req: Request, res: Response) => {

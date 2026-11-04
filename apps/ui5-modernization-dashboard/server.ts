@@ -4,13 +4,17 @@ import {
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer, type CallToolResult, type ReadResourceResult } from "@modelcontextprotocol/server";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { prepareDesktopSetup } from "./desktop-setup.mjs";
 import { stateSchema, updateSchema } from "./state-schema.js";
 import { readState, saveState, STATE_FILE } from "./state-store.js";
+
+const execFileAsync = promisify(execFile);
 
 const SERVER_FILE = fileURLToPath(import.meta.url);
 const PROJECT_DIR = SERVER_FILE.endsWith(".ts")
@@ -26,7 +30,7 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
     || (patch.status === "running" && existing.status !== "running");
   const now = new Date().toISOString();
   // Clocks describe received workflow events, not dates guessed by the agent.
-  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, ...fields } = patch;
+  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, ...fields } = patch;
   const merged: Record<string, unknown> = isNewRun
     ? { ...fields, startedAt: now }
     : { ...existing, ...fields, startedAt: existing.startedAt };
@@ -34,6 +38,7 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
     && (isNewRun || fields.currentPhase !== existing.currentPhase);
   if (phaseChanged) merged.phaseStartedAt = Number(fields.currentPhase) > 0 ? now : null;
   if (fields.status === "completed" && existing.status !== "completed") merged.completedAt = now;
+  if (fields.status === "stopped" && existing.status !== "stopped") merged.stoppedAt = now;
 
   // Derive counters from phases when the agent didn't push them explicitly.
   const phases = Array.isArray(merged.phases) ? merged.phases as Record<string, unknown>[] : [];
@@ -59,6 +64,73 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
 
   await saveState(merged, stateFile);
   return merged;
+}
+
+export interface ResetAppResult {
+  ok: boolean;
+  message: string;
+}
+
+// Switch back to the user's original branch, undoing the whole modernization run.
+// The work branch is kept by default so nothing is lost — it is the backup.
+// Shared by the reset-app MCP tool and the POST /api/reset-app route.
+export async function resetApp(
+  { removeWorkBranch = false, stateFile = STATE_FILE }: { removeWorkBranch?: boolean; stateFile?: string } = {},
+): Promise<ResetAppResult> {
+  const state = (await readState(stateFile)) ?? {};
+  const projectPath = state.projectPath as string | undefined;
+  const originalBranch = state.originalBranch as string | undefined;
+  const workBranch = state.workBranch as string | undefined;
+
+  if (!projectPath || !originalBranch || !workBranch) {
+    return {
+      ok: false,
+      message: "Cannot reset: the run did not record a project path, original branch and work branch. "
+        + "Nothing was changed in git.",
+    };
+  }
+
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: projectPath, timeout: 10000 });
+
+  let current: string;
+  try {
+    current = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+  } catch (error) {
+    return { ok: false, message: `Cannot reset: not a git repository or git failed (${(error as Error).message}).` };
+  }
+
+  // Only act if we're still on the work branch — otherwise the user moved on, don't surprise them.
+  if (current !== workBranch) {
+    return {
+      ok: false,
+      message: `Cannot reset: the repository is on '${current}', not the modernization branch '${workBranch}'. `
+        + "Switch back manually if you intend to reset. Nothing was changed.",
+    };
+  }
+
+  try {
+    // Discard all uncommitted changes from the modernization run before switching back.
+    // The work is safely committed on the work branch — uncommitted leftovers are artifacts.
+    await git(["checkout", "."]);
+    await git(["clean", "-fd"]);
+    await git(["checkout", originalBranch]);
+  } catch (error) {
+    return { ok: false, message: `Cannot reset: failed to switch to '${originalBranch}' (${(error as Error).message}).` };
+  }
+
+  let note = `Switched back to '${originalBranch}'. Modernization work is preserved on '${workBranch}'.`;
+  if (removeWorkBranch) {
+    try {
+      await git(["branch", "-D", workBranch]);
+      note = `Switched back to '${originalBranch}' and deleted the modernization branch '${workBranch}'.`;
+    } catch (error) {
+      note = `Switched back to '${originalBranch}', but could not delete '${workBranch}' (${(error as Error).message}). `
+        + "The branch is left in place.";
+    }
+  }
+
+  await saveState({ status: "idle" }, stateFile);
+  return { ok: true, message: note };
 }
 
 export function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {}): McpServer {
@@ -162,6 +234,28 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
     },
   );
 
+  // Tool: reset-app — undo the whole run by switching back to the original branch
+  server.registerTool(
+    "reset-app",
+    {
+      title: "Reset Modernized App",
+      description:
+        "Undo the entire modernization and return the app to its original state by switching the repository back "
+        + "to the branch the user started on. The modernization work stays on its own branch as a backup unless "
+        + "removeWorkBranch is set. Only acts when the repo is still on the recorded modernization branch.",
+      inputSchema: z.object({ removeWorkBranch: z.boolean().optional() }),
+      outputSchema: stateSchema,
+    },
+    async (args: { removeWorkBranch?: boolean }): Promise<CallToolResult> => {
+      const result = await resetApp({ removeWorkBranch: args.removeWorkBranch, stateFile });
+      return {
+        content: [{ type: "text", text: result.message }],
+        structuredContent: { status: "idle" },
+        isError: result.ok ? undefined : true,
+      };
+    },
+  );
+
   // Tool: get-file — read a markdown file by absolute path and return its content
   server.registerTool(
     "get-file",
@@ -196,6 +290,28 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
           isError: true,
         };
       }
+    },
+  );
+
+  // Tool: stop-status — mark the run as stopped early while preserving progress
+  server.registerTool(
+    "stop-status",
+    {
+      title: "Stop Modernization",
+      description:
+        "Mark the modernization as stopped by the user before it completed. " +
+        "Call this (instead of pushing status:\"completed\") when the user asks to stop/abort the run. " +
+        "The existing state is preserved — remaining findings, phases and deferred issues stay visible on the end screen. " +
+        "Pass an optional free-text reason shown on the dashboard.",
+      inputSchema: z.object({ reason: z.string().optional() }),
+      outputSchema: stateSchema,
+    },
+    async (args: { reason?: string }): Promise<CallToolResult> => {
+      const merged = await writeState(stateFile, { status: "stopped", stopReason: args.reason ?? null });
+      return {
+        content: [{ type: "text", text: `Modernization stopped${args.reason ? `: ${args.reason}` : ""}.` }],
+        structuredContent: merged,
+      };
     },
   );
 

@@ -353,6 +353,9 @@ body {
 /* Two columns when there's room; collapse to one on narrow viewports. */
 .completed-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.625rem; }
 .completed-links .link-card { width: 100%; }
+.completed-reset:not(:empty) { margin-top: 1rem; display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+.reset-note { font-size: 0.8125rem; color: var(--sapNeutralColor, #6a6d70); }
+.reset-note code { font-family: var(--sapCode_FontFamily, monospace); }
 .link-card ui5-card { overflow: hidden; }
 .link-card-row {
   display: flex;

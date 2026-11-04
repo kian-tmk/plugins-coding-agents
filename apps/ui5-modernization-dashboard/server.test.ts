@@ -1,13 +1,34 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createServer } from "./server.js";
+
+const execFileAsync = promisify(execFile);
+
+// Build a throwaway git repo: initial commit on <main>, then a work branch with one extra commit.
+async function makeRepo(dir: string): Promise<{ originalBranch: string; workBranch: string }> {
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: dir });
+  await git(["init", "-q"]);
+  await git(["config", "user.email", "test@example.com"]);
+  await git(["config", "user.name", "Test"]);
+  await writeFile(path.join(dir, "app.js"), "// original\n");
+  await git(["add", "-A"]);
+  await git(["commit", "-q", "-m", "initial"]);
+  const originalBranch = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+  const workBranch = "ui5-modernization-test";
+  await git(["checkout", "-q", "-b", workBranch]);
+  await writeFile(path.join(dir, "app.js"), "// modernized\n");
+  await git(["commit", "-q", "-am", "modernize"]);
+  return { originalBranch, workBranch };
+}
 
 test("one explicit dashboard opening followed by 20 updates and polls exposes only one widget tool", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "ui5-widget-test-"));
@@ -67,6 +88,125 @@ test("one explicit dashboard opening followed by 20 updates and polls exposes on
   });
   assert.equal(rejectedClock.isError, true);
   assert.deepEqual(JSON.parse(await readFile(path.join(directory, "state.json"), "utf8")), { status: "idle" });
+});
+
+test("stop-status marks the run stopped while preserving progress", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-stop-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "stop-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // Push a mid-run state with remaining findings and phases.
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", linterBaseline: 40, findingsFixed: 15, findingsRemaining: 25,
+      currentPhase: 2, startedAt: "2026-11-02T12:00:00.000Z",
+      phases: [{ id: 1, name: "Mechanical Baseline", status: "completed" }],
+    },
+  });
+
+  const stopped = await client.callTool({ name: "stop-status", arguments: { reason: "Nutzer hat gestoppt" } });
+  assert.equal(stopped.isError, undefined);
+
+  const state = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
+  assert.equal(state.status, "stopped");
+  assert.equal(state.stopReason, "Nutzer hat gestoppt");
+  assert.ok(state.stoppedAt, "stoppedAt is set by the server");
+  // Progress is preserved, not wiped like reset-status.
+  assert.equal(state.findingsRemaining, 25);
+  assert.equal(state.findingsFixed, 15);
+  assert.equal(state.currentPhase, 2);
+  assert.equal(state.phases.length, 1);
+  // startedAt survives the stop.
+  assert.notEqual(state.startedAt, undefined);
+
+  // Stopping without a reason is allowed and leaves stopReason null.
+  const directory2 = await mkdtemp(path.join(tmpdir(), "ui5-stop-test2-"));
+  const server2 = createServer({ stateFile: path.join(directory2, "state.json") });
+  const client2 = new Client({ name: "stop-test-2", version: "1.0.0" });
+  t.after(async () => {
+    await client2.close();
+    await server2.close();
+    await rm(directory2, { recursive: true, force: true });
+  });
+  const [ct2, st2] = InMemoryTransport.createLinkedPair();
+  await server2.connect(st2);
+  await client2.connect(ct2);
+  await client2.callTool({ name: "update-status", arguments: { status: "running", linterBaseline: 10 } });
+  await client2.callTool({ name: "stop-status", arguments: {} });
+  const state2 = (await client2.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
+  assert.equal(state2.status, "stopped");
+  assert.equal(state2.stopReason, null);
+});
+
+test("reset-app switches the repo back to the original branch and keeps the work branch", async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), "ui5-reset-repo-"));
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-reset-state-"));
+  const stateFile = path.join(stateDir, "state.json");
+  const { originalBranch, workBranch } = await makeRepo(repo);
+
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "reset-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(repo, { recursive: true, force: true });
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+
+  // Seed a stopped run that recorded the branches.
+  await client.callTool({
+    name: "update-status",
+    arguments: { status: "running", projectPath: repo, originalBranch, workBranch, linterBaseline: 10 },
+  });
+  await client.callTool({ name: "stop-status", arguments: {} });
+
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: repo });
+  assert.equal((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(), workBranch, "starts on work branch");
+
+  const reset = await client.callTool({ name: "reset-app", arguments: {} });
+  assert.notEqual(reset.isError, true);
+
+  // Repo is back on the original branch, with the original file contents.
+  assert.equal((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(), originalBranch);
+  assert.equal(await readFile(path.join(repo, "app.js"), "utf8"), "// original\n");
+  // Work branch is preserved as the backup.
+  const branches = (await git(["branch", "--list", workBranch])).stdout.trim();
+  assert.ok(branches.includes(workBranch), "work branch kept as backup");
+  // Dashboard is idle again.
+  assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "idle");
+});
+
+test("reset-app refuses cleanly when no branches were recorded", async (t) => {
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-reset-none-"));
+  const stateFile = path.join(stateDir, "state.json");
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "reset-none-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+
+  await client.callTool({ name: "update-status", arguments: { status: "stopped", linterBaseline: 5 } });
+  const reset = await client.callTool({ name: "reset-app", arguments: {} });
+  assert.equal(reset.isError, true);
+  // State untouched — still stopped, not forced to idle on a refusal.
+  assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "stopped");
 });
 
 // Reproduce hosts that retain only explicitly declared schema properties.

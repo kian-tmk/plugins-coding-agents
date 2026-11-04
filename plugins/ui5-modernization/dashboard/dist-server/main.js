@@ -59736,11 +59736,12 @@ var NodeStreamableHTTPServerTransport = class {
 
 // main.ts
 var import_cors2 = __toESM(require_lib3(), 1);
+var import_express3 = __toESM(require_express2(), 1);
 import fs3 from "node:fs/promises";
 import path3 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
 
 // node_modules/marked/lib/marked.esm.js
 function B() {
@@ -61094,9 +61095,11 @@ function G(B2, Q2, F2, V2, q2) {
 }
 
 // server.ts
+import { execFile } from "node:child_process";
 import fs2 from "node:fs/promises";
 import path2 from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 // desktop-setup.mjs
 import { execFileSync } from "node:child_process";
@@ -61427,7 +61430,7 @@ var phaseSchema = external_exports.object({
 }).partial().passthrough();
 var stateSchema = external_exports.object({
   runId: external_exports.string(),
-  status: external_exports.enum(["idle", "running", "completed"]),
+  status: external_exports.enum(["idle", "running", "completed", "stopped"]),
   project: external_exports.string(),
   projectPath: external_exports.string(),
   ui5Version: external_exports.string(),
@@ -61438,6 +61441,8 @@ var stateSchema = external_exports.object({
   workingTreeStatus: external_exports.string(),
   linterBaseline: external_exports.number(),
   totalFindings: external_exports.number(),
+  originalBranch: external_exports.string().nullable().describe("Branch the user was on at start; the reset target."),
+  workBranch: external_exports.string().nullable().describe("Dedicated modernization branch the run commits to."),
   findingsFixed: external_exports.number(),
   findingsRemaining: external_exports.number(),
   currentPhase: external_exports.number(),
@@ -61455,6 +61460,8 @@ var stateSchema = external_exports.object({
   issuesPath: external_exports.string(),
   startedAt: external_exports.string().nullable().describe("Server-managed run start time; omit from updates."),
   completedAt: external_exports.string().nullable().describe("Server-managed completion time; omit from updates."),
+  stoppedAt: external_exports.string().nullable().describe("Server-managed stop time; omit from updates."),
+  stopReason: external_exports.string().nullable().describe("Free-text reason why the run was stopped early."),
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   lastGitActivityAt: external_exports.string().nullable(),
   gitActivity: external_exports.object({
@@ -61464,7 +61471,7 @@ var stateSchema = external_exports.object({
   }).nullable()
 }).partial().passthrough();
 var updateSchema = stateSchema.refine(
-  (value) => Object.keys(value).some((key) => key in stateSchema.shape && !["startedAt", "phaseStartedAt", "completedAt"].includes(key)),
+  (value) => Object.keys(value).some((key) => key in stateSchema.shape && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt"].includes(key)),
   "Supply at least one writable modernization status field. Empty or clock-only updates are not saved."
 );
 
@@ -61493,6 +61500,7 @@ async function saveState(state, stateFile = STATE_FILE) {
 }
 
 // server.ts
+var execFileAsync = promisify(execFile);
 var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
@@ -61501,11 +61509,12 @@ async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, ...fields } = patch;
+  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, ...fields } = patch;
   const merged = isNewRun ? { ...fields, startedAt: now } : { ...existing, ...fields, startedAt: existing.startedAt };
   const phaseChanged = fields.currentPhase !== void 0 && (isNewRun || fields.currentPhase !== existing.currentPhase);
   if (phaseChanged) merged.phaseStartedAt = Number(fields.currentPhase) > 0 ? now : null;
   if (fields.status === "completed" && existing.status !== "completed") merged.completedAt = now;
+  if (fields.status === "stopped" && existing.status !== "stopped") merged.stoppedAt = now;
   const phases = Array.isArray(merged.phases) ? merged.phases : [];
   const baseline = typeof merged.totalFindings === "number" ? merged.totalFindings : typeof merged.linterBaseline === "number" ? merged.linterBaseline : 0;
   if (baseline > 0 && phases.length > 0) {
@@ -61527,6 +61536,49 @@ async function writeState2(stateFile, patch) {
   }
   await saveState(merged, stateFile);
   return merged;
+}
+async function resetApp({ removeWorkBranch = false, stateFile = STATE_FILE } = {}) {
+  const state = await readState(stateFile) ?? {};
+  const projectPath = state.projectPath;
+  const originalBranch = state.originalBranch;
+  const workBranch = state.workBranch;
+  if (!projectPath || !originalBranch || !workBranch) {
+    return {
+      ok: false,
+      message: "Cannot reset: the run did not record a project path, original branch and work branch. Nothing was changed in git."
+    };
+  }
+  const git = (args) => execFileAsync("git", args, { cwd: projectPath, timeout: 1e4 });
+  let current;
+  try {
+    current = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+  } catch (error62) {
+    return { ok: false, message: `Cannot reset: not a git repository or git failed (${error62.message}).` };
+  }
+  if (current !== workBranch) {
+    return {
+      ok: false,
+      message: `Cannot reset: the repository is on '${current}', not the modernization branch '${workBranch}'. Switch back manually if you intend to reset. Nothing was changed.`
+    };
+  }
+  try {
+    await git(["checkout", "."]);
+    await git(["clean", "-fd"]);
+    await git(["checkout", originalBranch]);
+  } catch (error62) {
+    return { ok: false, message: `Cannot reset: failed to switch to '${originalBranch}' (${error62.message}).` };
+  }
+  let note = `Switched back to '${originalBranch}'. Modernization work is preserved on '${workBranch}'.`;
+  if (removeWorkBranch) {
+    try {
+      await git(["branch", "-D", workBranch]);
+      note = `Switched back to '${originalBranch}' and deleted the modernization branch '${workBranch}'.`;
+    } catch (error62) {
+      note = `Switched back to '${originalBranch}', but could not delete '${workBranch}' (${error62.message}). The branch is left in place.`;
+    }
+  }
+  await saveState({ status: "idle" }, stateFile);
+  return { ok: true, message: note };
 }
 function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {}) {
   const server = new McpServer({
@@ -61617,6 +61669,23 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
     }
   );
   server.registerTool(
+    "reset-app",
+    {
+      title: "Reset Modernized App",
+      description: "Undo the entire modernization and return the app to its original state by switching the repository back to the branch the user started on. The modernization work stays on its own branch as a backup unless removeWorkBranch is set. Only acts when the repo is still on the recorded modernization branch.",
+      inputSchema: external_exports.object({ removeWorkBranch: external_exports.boolean().optional() }),
+      outputSchema: stateSchema
+    },
+    async (args) => {
+      const result = await resetApp({ removeWorkBranch: args.removeWorkBranch, stateFile });
+      return {
+        content: [{ type: "text", text: result.message }],
+        structuredContent: { status: "idle" },
+        isError: result.ok ? void 0 : true
+      };
+    }
+  );
+  server.registerTool(
     "get-file",
     {
       title: "Get File Content",
@@ -61650,6 +61719,22 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
       }
     }
   );
+  server.registerTool(
+    "stop-status",
+    {
+      title: "Stop Modernization",
+      description: 'Mark the modernization as stopped by the user before it completed. Call this (instead of pushing status:"completed") when the user asks to stop/abort the run. The existing state is preserved \u2014 remaining findings, phases and deferred issues stay visible on the end screen. Pass an optional free-text reason shown on the dashboard.',
+      inputSchema: external_exports.object({ reason: external_exports.string().optional() }),
+      outputSchema: stateSchema
+    },
+    async (args) => {
+      const merged = await writeState2(stateFile, { status: "stopped", stopReason: args.reason ?? null });
+      return {
+        content: [{ type: "text", text: `Modernization stopped${args.reason ? `: ${args.reason}` : ""}.` }],
+        structuredContent: merged
+      };
+    }
+  );
   G(
     server,
     resourceUri,
@@ -61666,7 +61751,7 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
 }
 
 // main.ts
-var execFileAsync = promisify(execFile);
+var execFileAsync2 = promisify2(execFile2);
 var _SERVER_FILE = fileURLToPath2(import.meta.url);
 var PROJECT_DIR2 = _SERVER_FILE.endsWith(".ts") ? path3.dirname(_SERVER_FILE) : path3.resolve(path3.dirname(_SERVER_FILE), "..");
 async function getGitActivity(projectPath, sinceIso) {
@@ -61674,7 +61759,7 @@ async function getGitActivity(projectPath, sinceIso) {
   const modifiedFiles = [];
   const commits = [];
   try {
-    const { stdout: logOut } = await execFileAsync(
+    const { stdout: logOut } = await execFileAsync2(
       "git",
       ["log", `--since=${sinceIso}`, "--pretty=format:%h	%s	%cI", "--no-merges"],
       { ...opts, timeout: 5e3 }
@@ -61686,13 +61771,13 @@ async function getGitActivity(projectPath, sinceIso) {
   } catch {
   }
   try {
-    const { stdout: statusOut } = await execFileAsync(
+    const { stdout: statusOut } = await execFileAsync2(
       "git",
       ["diff", "--name-only", "HEAD"],
       { ...opts, timeout: 5e3 }
     );
     for (const f2 of statusOut.split("\n").filter(Boolean)) modifiedFiles.push(f2.trim());
-    const { stdout: newOut } = await execFileAsync(
+    const { stdout: newOut } = await execFileAsync2(
       "git",
       ["ls-files", "--others", "--exclude-standard"],
       { ...opts, timeout: 5e3 }
@@ -61733,6 +61818,7 @@ async function startStreamableHTTPServer(factory) {
   const port = parseInt(process.env.PORT ?? "3001", 10);
   const app = createMcpExpressApp({ host: "0.0.0.0" });
   app.use((0, import_cors2.default)());
+  app.use("/api", import_express3.default.json());
   app.get("/", async (_req, res) => {
     const htmlPath = path3.join(PROJECT_DIR2, "dist", "mcp-app.html");
     res.sendFile(htmlPath);
@@ -61799,6 +61885,25 @@ async function startStreamableHTTPServer(factory) {
     stopGitPolling();
     await saveState({ status: "idle" });
     res.json({ ok: true });
+  });
+  app.post("/api/stop", async (req, res) => {
+    stopGitPolling();
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
+    const existing = await readState() ?? {};
+    const alreadyStopped = existing.status === "stopped";
+    await saveState({
+      ...existing,
+      status: "stopped",
+      stopReason: reason,
+      stoppedAt: alreadyStopped ? existing.stoppedAt : (/* @__PURE__ */ new Date()).toISOString()
+    });
+    res.json({ ok: true });
+  });
+  app.post("/api/reset-app", async (req, res) => {
+    stopGitPolling();
+    const removeWorkBranch = req.body?.removeWorkBranch === true;
+    const result = await resetApp({ removeWorkBranch });
+    res.status(result.ok ? 200 : 409).json(result);
   });
   app.all("/mcp", async (req, res) => {
     const server = factory();
