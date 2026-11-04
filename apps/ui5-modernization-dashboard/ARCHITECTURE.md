@@ -1,6 +1,6 @@
 # UI5 Modernization Dashboard — Architektur & Stand
 
-> Stand: 2026-11-03. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
+> Stand: 2026-11-04. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
 > zusammenspielen, welche Daten fließen und was die App heute kann.
 >
 > **Pflege-Konvention:** Bei jeder nennenswerten Änderung am Dashboard (Datenfluss,
@@ -11,15 +11,50 @@
 
 ## Was die App ist
 
-Ein **Fortschritts-Dashboard für die UI5-Modernisierung**. Während der
-`modernize-ui5-app`-Workflow eine UI5-App modernisiert, pusht er laufend
-Status-Updates, die diese App live als Dashboard rendert — als eingebettetes
-Panel in **Claude Desktop** (MCP App) und/oder als Seite im **Browser**
-(`http://localhost:3001`).
+Ein **Fortschritts-Dashboard für die UI5-Modernisierung**, gebaut als **MCP App**
+(`@modelcontextprotocol/ext-apps`). Während der `modernize-ui5-app`-Skill eine
+UI5-App modernisiert, pusht er laufend Status-Updates über MCP-Tools. Das Dashboard
+rendert diese live — als **natives Inline-Widget in Claude Desktop** oder als
+**Seite im Browser** (`http://localhost:3001`).
 
-Die App zeigt **keine** eigene Logik der Modernisierung — sie ist reine
-Anzeige. Die einzige Quelle der Wahrheit ist eine State-Datei, die der Workflow
-beschreibt und die App liest.
+Die App zeigt **keine** eigene Logik der Modernisierung — sie ist reine Anzeige.
+Die einzige Quelle der Wahrheit ist eine State-Datei, die der Workflow beschreibt
+und die App liest.
+
+### Drei Plattformen
+
+Das Dashboard läuft auf allen drei Claude-Plattformen:
+
+| Plattform | Wo | Dashboard-Anzeige | Status-Push |
+|---|---|---|---|
+| **Claude Code CLI** | Terminal | Browser auf `localhost:3001` | `update-status` MCP-Tool |
+| **Claude Code Desktop** | Claude Desktop App (3P-Profil), Code-Modus | Natives Inline-Widget (MCP App im iframe) | `update-status` MCP-Tool |
+| **Claude Cowork** | Claude Desktop App (3P-Profil), Cowork-Modus | Nicht unterstützt | — |
+
+CLI und Desktop teilen dieselbe `claude_desktop_config.json` unter `~/Library/Application Support/Claude-3p/`.
+
+### MCP-App-Rendering in Claude Desktop
+
+Die UI ist eine **MCP App** — sie nutzt das `@modelcontextprotocol/ext-apps` SDK:
+
+1. **Server registriert eine UI-Resource** (`registerAppResource`) unter der URI `ui://ui5-modernization/mcp-app.html`. Diese liefert das gebaute Single-File-HTML (alle JS/CSS inline, ~1320 KB).
+2. **Das `open-dashboard`-Tool** trägt `_meta: { ui: { resourceUri } }` — das signalisiert dem Host, dass dieses Tool ein Widget öffnet. Kein anderes Tool hat `_meta.ui`.
+3. **Claude Desktop rendert das HTML in einem iframe**. Der Host liefert Theme, Fonts und Style-Variablen über den **Host-Context** (`McpUiHostContext`).
+4. **Die UI verbindet sich per `app.connect()`** und kommuniziert dann bidirektional mit dem Server:
+   - `app.callServerTool()` → ruft MCP-Tools (`get-status`, `reset-app`, etc.)
+   - `app.onhostcontextchanged` → Theme-Wechsel, Display-Mode-Updates
+   - `app.ontoolresult` → empfängt `update-status`-Ergebnisse (live Updates)
+   - `app.requestDisplayMode()` → Fullscreen-Toggle (aktuell blockiert, s.u.)
+   - `app.sendSizeChanged()` → bevorzugte Widget-Breite (720px)
+
+**Widget-Rendering-Regeln (Claude Desktop):**
+- Der MCP-Server **muss** in `claude_desktop_config.json` registriert sein (app-config). Plugin-`.mcp.json` allein reicht **nicht** für Widget-Rendering.
+- Plugin-`.mcp.json` darf den Dashboard-Server **nicht** zusätzlich registrieren — Duplicate-Server erzeugt mehrere PIDs und bricht Widget-Rendering stumm.
+- Tools (`update-status`, `get-status`) funktionieren über beide Server-Instanzen (Plugin + app-config), da beide denselben State-File lesen/schreiben.
+
+**Fullscreen** ist im Code bereit (`toggleFullscreen`, `syncFullscreenButtons`), aber die Buttons sind nicht im HTML — blockiert durch 3P Feature-Gate `513873720` (`epitaxyMcpAppPane`). Ohne Gate liefert der Host `availableDisplayModes: ["inline"]`. Kommentar im Code dokumentiert Wiederaktivierung.
+
+**Standalone-Fallback:** Wenn `app.connect()` fehlschlägt (Browser, kein MCP-Host), fällt die UI auf REST-Polling zurück (`/api/status` alle 1,5 s). Markdown-Dateien werden über `/files/:filename` statt `get-file` geladen.
 
 ## Verzeichnis-Layout
 
@@ -113,57 +148,44 @@ Ein Node-Prozess, der in **zwei Modi** laufen kann — beide bedienen denselben 
 
 ### 3. Die UI (`src/mcp-app.ts` + `mcp-app.html` + `mcp-app.css`)
 
-Eine Single-Page-App mit vier Screens, umgeschaltet nach `state.status`.
-Seit 2026-10-22 nutzt die gesamte UI **UI5 Web Components** (`@ui5/webcomponents`,
-`@ui5/webcomponents-fiori`, `@ui5/webcomponents-icons`). Die Controls werden als
-ES-Module importiert (keine `Assets.js`); beide Themes (`sap_horizon`, `sap_horizon_dark`)
-sind per `registerThemePropertiesLoader` registriert. `setTheme` schaltet nach
-Host-Theme (`light`/`dark`) um.
+Eine Single-Page-App mit vier Screens, umgeschaltet nach `state.status`:
 
-- **Idle** — `ui5-illustrated-message` (`tnt/Tools`) + `ui5-busy-indicator`; title includes
-  `developer-settings` icon in `--sapLinkColor`.
-- **Dashboard (running)** — `ui5-bar` (Header), `ui5-card` (Preflight, Stepper-Wrapper,
-  Phase-Info, Stats, Activity), `ui5-progress-indicator`, `ui5-tag` (Status),
-  `ui5-icon` (task/history/trend-up/source-code), `ui5-card-header`.
-  Stepper: Custom-Aufbau in `ui5-card`; Farben über SAP-Theme-Tokens
-  (`--sapPositiveColor`, `--sapCriticalElementColor`, `--sapNegativeColor`, `--sapInformativeColor`).
-- **Completed** — `ui5-card`, `ui5-table`/`ui5-table-row`/`ui5-table-cell` (Phase-Summary,
-  explicit column widths; Spaltenreihenfolge `# / Phase / Fixed / Files / Commit / Duration`,
-  die Duration-Spalte rechtsbündig — Werte, Gate-Dauern und Header auf einer Achse),
-  `ui5-tag` (Gate-Status, Issues-Count), custom link-cards
-  (clickable button area + vertical separator + download icon zone),
-  `ui5-icon` (sys-enter-2, document, task, source-code, alert, download).
-  Stats cards show icons beside value+label. Gate notes use `→` arrow.
-  Deferred issues render description inline (no separate reason line).
+- **Idle** — Warte-Anzeige mit `ui5-illustrated-message`, verbindet sich automatisch wenn ein Lauf startet.
+- **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität, Git-Commits.
+- **Completed** — Zusammenfassung: Phasen-Tabelle mit Gate-Ergebnissen, Statistiken, Links zu Report/Issues (Markdown-Viewer), Reset-Button.
+- **Stopped** — wie Completed, aber mit Stop-Grund und ohne Erfolgs-Header.
 
-Das Layout ist responsive (reine CSS-Media-Queries, Breakpoints bei 700px und 500px —
-Details unten im Feature-Stand).
+Gebaut mit **UI5 Web Components** (`@ui5/webcomponents`, `-fiori`, `-icons`). Gezielte Imports, kein `Assets.js`. Themes (`sap_horizon`/`sap_horizon_dark`) per `registerThemePropertiesLoader`, umgeschaltet nach Host-Context. Responsive Layout (CSS-Media-Queries, Breakpoints 700px/500px).
 
-**Betriebsmodi der UI** (automatisch erkannt):
-- **MCP-App** (in Claude Desktop): `app.connect()` erfolgreich → State über MCP-Tools
-  (`get-status`), Markdown über `get-file`. Fullscreen-Toggle verfügbar.
-- **Standalone** (Browser): `app.connect()` schlägt fehl → Fallback auf REST
-  (`/api/status`, `/files/...`). Fullscreen-Buttons werden ausgeblendet.
-- In beiden Modi: Polling alle 1,5 s.
+**Polling:** Alle 1,5 s — per `app.callServerTool("get-status")` im MCP-Modus, per `fetch("/api/status")` im Standalone-Modus.
+
+**Counter-Derivation:** Sowohl Server (`writeState`) als auch Frontend (`renderDashboard`) leiten `findingsFixed`/`findingsRemaining`/`overallProgress` aus den Phasen-Daten ab, falls der Agent sie nicht explizit pusht.
 
 ## Datenfluss (End-to-End)
 
 ```
-modernize-ui5-app Workflow (läuft in der Ziel-App)
-   │  push_status  →  curl POST localhost:3001/mcp  →  MCP-Tool "update-status"
-   ▼
+modernize-ui5-app Skill (Agent, läuft in der Ziel-App)
+   │  MCP-Tool "update-status"  ─────────────────────────┐
+   │  (fire-and-forget, kein HTTP, kein curl)             │
+   ▼                                                      ▼
+                                              server.ts: writeState()
+                                              (Timestamps, Counter-Derivation)
+                                                      │
+                                                      ▼
 ~/.ui5-modernization-dashboard/state.json   ← EINZIGE Quelle der Wahrheit
-   ▲                                          ▲      (Home-Dir, nicht TMPDIR —
-   │ Git-Polling (5 s, nur HTTP-Modus)        │       geteilt über Sandbox-Grenzen)
-HTTP-Server :3001                      stdio-Server (Desktop)
+   ▲                                          (Home-Dir, nicht TMPDIR —
+   │ Git-Polling (5 s, nur HTTP-Modus)         geteilt über Sandbox-Grenzen)
+   │
+HTTP-Server :3001                      stdio-Server (Desktop, --stdio)
    │ /api/status (1,5 s Poll)                 │ get-status (1,5 s Poll)
    ▼                                          ▼
-Browser-Dashboard                      MCP-App-Panel in Claude Desktop
+Browser-Dashboard                      MCP-App-Widget in Claude Desktop
+(Standalone-Modus)                     (iframe, Host-Context für Theme)
 ```
 
 Beide Oberflächen können gleichzeitig laufen und spiegeln denselben State.
-`push_status` ist im Workflow fire-and-forget — ein fehlgeschlagener Push darf
-den Modernisierungslauf nie abbrechen.
+Status-Push ist immer fire-and-forget — ein fehlgeschlagener Push darf den
+Modernisierungslauf nie abbrechen.
 
 ## Die 6 Phasen (vom Workflow vorgegeben)
 
@@ -208,19 +230,6 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 3. Optional: `removeWorkBranch: true` löscht den Work-Branch.
 4. **Nie manuell** per `git checkout`/`git branch -D` — das lässt modifizierte Dateien auf dem Ziel-Branch liegen.
 
-## Technische Details
-
-- **UI5 Web Components** für alle Screens. Gezielte Imports, kein `Assets.js`. Bundle ~1320 KB inline.
-- **Theme-Bridge**: `sap_horizon`/`sap_horizon_dark`, umgeschaltet per Host-Context.
-- **Vier Screens**: Idle, Running (Dashboard), Completed, Stopped — automatischer Wechsel nach `status`.
-- **Live-Timer**: zählt von `startedAt` hoch, pausiert bei Inaktivität (>90 s ohne Git-Aktivität).
-- **Counter-Derivation**: Server und Frontend leiten `findingsFixed`/`findingsRemaining`/`overallProgress` aus Phasen-Daten ab.
-- **Stepper**: Custom-Aufbau mit Phasen- und Gate-Knoten, SAP-Theme-Tokens für Farben.
-- **Git-Aktivität**: Server pollt alle 5 s Commits und geänderte Dateien aus `projectPath` (nur HTTP-Modus).
-- **Markdown-Viewer**: Report/Issues als Overlay (Desktop via `get-file`, Browser via `/files/:filename`).
-- **Stale-Schutz**: `running`-State älter als 24 h wird als idle behandelt.
-- **Fullscreen**: Logik bereit im TS, aber blockiert durch 3P Feature-Gate `513873720` (`epitaxyMcpAppPane`). Buttons nicht im HTML bis Gate freigeschaltet.
-
 ## Bauen & Starten
 
 ```bash
@@ -240,17 +249,52 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 
 ## Integration & Auslieferung
 
-- Der Workflow (`plugins/ui5-modernization/skills/modernize-ui5-app/SKILL.md`)
-  startet den Server und pusht den Status.
-- **Desktop-Setup** ist im Server als `setup-desktop-dashboard`-MCP-Tool eingebaut
-  (nur macOS). Es kopiert Bundle-Artefakte nach `~/Library/Application Support/UI5
-  Modernization Dashboard/<profile>/runtime/`, registriert den MCP-Server-Eintrag in
-  `claude_desktop_config.json` und öffnet Claude erneut — alles über einen
-  launchd-Helper, der auf den User-Quit wartet.
-- **Plugin-Auslieferung:** Der MCP-Server wird self-contained über
-  `plugins/ui5-modernization/dashboard/` ausgeliefert (`.mcp.json`-Pfad:
-  `${CLAUDE_PLUGIN_ROOT}/dashboard/dist-server/main.js`). Nach jeder Änderung:
-  `npm run build && node scripts/copy-to-plugin.mjs`.
+### Plugin-Auslieferung
+
+Die Quelle ist `apps/ui5-modernization-dashboard/`. Der Server wird per esbuild zu **einer** Datei gebündelt (`dist-server/main.js`, ~2,5 MB, alle Deps inline). Die UI wird per Vite zu einer Single-File-HTML gebündelt (`dist/mcp-app.html`, ~1320 KB, JS+CSS inline). Beides wird per `npm run deliver` nach `plugins/ui5-modernization/dashboard/` kopiert und dort committet.
+
+```
+plugins/ui5-modernization/
+├── .mcp.json                    # NUR chrome-devtools, NICHT dashboard
+├── dashboard/
+│   ├── dist-server/main.js      # Gebündelter Server (self-contained, kein node_modules)
+│   ├── dist/mcp-app.html        # Gebündelte UI
+│   ├── desktop-setup.mjs        # Desktop-Registrierungshelper
+│   ├── desktop-setup-worker.mjs # launchd-Worker
+│   └── package.json
+└── skills/
+    └── modernize-ui5-app/SKILL.md
+```
+
+**Wichtig:** Die Plugin-`.mcp.json` registriert **nur** `chrome-devtools`, **nicht** den Dashboard-Server. Der Dashboard-Server wird in der CLI über den Skill gestartet (HTTP-Modus) und im Desktop über `claude_desktop_config.json` (stdio-Modus).
+
+### Zwei Server-Instanzen im Desktop
+
+Im Desktop laufen **zwei** Instanzen des Dashboard-Servers:
+
+1. **Plugin-Instanz** (`plugin_ui5-modernization_ui5-modernization-dashboard`): Wird vom Plugin geladen. Tools funktionieren, aber Widgets rendern **nicht**.
+2. **App-Config-Instanz** (`ui5-modernization-dashboard`): Registriert in `claude_desktop_config.json` durch `setup-desktop-dashboard`. Widget-Rendering funktioniert **nur** hier.
+
+Beide teilen denselben State-File (`~/.ui5-modernization-dashboard/state.json`). `update-status` über die Plugin-Instanz landet im selben State und wird vom Widget der App-Config-Instanz angezeigt.
+
+**Achtung:** Wenn `.mcp.json` den Dashboard-Server **zusätzlich** registriert, entstehen drei Server-PIDs → Widget-Rendering bricht stumm. Deshalb steht der Dashboard-Server **nicht** in `.mcp.json`.
+
+### Desktop-Setup
+
+Das `setup-desktop-dashboard`-Tool (nur macOS, gated durch `enableDesktopSetup`-Flag):
+
+1. Kopiert Bundle-Artefakte nach `~/Library/Application Support/UI5 Modernization Dashboard/<profile>/runtime/`
+2. Registriert den MCP-Server-Eintrag in `claude_desktop_config.json`
+3. Ein launchd-Helper wartet auf User-Quit und öffnet Claude neu
+
+### Skill-Integration
+
+Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
+- Startet den HTTP-Server (CLI) oder prüft Desktop-Registrierung
+- Pusht Status über `update-status` (MCP-Tool, kein HTTP/curl)
+- Nutzt `stop-status` bei User-Abbruch (erhält Fortschritt)
+- Nutzt `reset-app` bei Reset (nie manueller Git-Reset)
+- Dokumentiert alle Tools und wann sie aufzurufen sind
 
 ## Changelog
 
