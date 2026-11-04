@@ -29,7 +29,8 @@ Das Dashboard läuft auf allen drei Claude-Plattformen:
 |---|---|---|---|
 | **Claude Code CLI** | Terminal | Browser auf `localhost:3001` | `update-status` MCP-Tool |
 | **Claude Code Desktop** | Claude Desktop App (3P-Profil), Code-Modus | Natives Inline-Widget (MCP App im iframe) | `update-status` MCP-Tool |
-| **Claude Cowork** | Claude Desktop App (3P-Profil), Cowork-Modus | Nicht unterstützt | — |
+
+**Claude Cowork** (Cowork-Modus in der Desktop App) wird nicht unterstützt — kein `/mcp`, keine Plugin-Tools, kein MCP-App-Rendering. Das Dashboard ist ausschließlich für die Code-Plattformen gebaut.
 
 CLI und Desktop teilen dieselbe `claude_desktop_config.json` unter `~/Library/Application Support/Claude-3p/`.
 
