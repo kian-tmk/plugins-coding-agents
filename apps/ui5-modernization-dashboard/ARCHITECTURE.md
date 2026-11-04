@@ -177,41 +177,49 @@ den Modernisierungslauf nie abbrechen.
 Nach jeder Phase (außer 6) läuft ein **Verification Gate** (Tests), je nach
 gewähltem Modus (full autonomous / half autonomous / manual).
 
-## Was die App heute kann (Feature-Stand)
+## Szenarien
 
-- **UI5 Web Components** für alle drei Screens (Idle, Running, Completed). Gezielte
-  Imports, **kein** `Assets.js`. Bundle-Größe: ~1315 KB inline (Baseline 310 KB).
-- **Theme-Bridge**: `sap_horizon` / `sap_horizon_dark` per `registerThemePropertiesLoader`
-  registriert; `setTheme` schaltet nach Host-Theme (`light`/`dark`) in `handleHostContext`.
-- **Drei Screens** mit automatischem Wechsel nach `status`.
-- **Responsive Layout** (reine CSS-Media-Queries):
-  - Running-Screen max. Breite 78% / 820px, Stats als 4er-Grid.
-  - ≤ 700px: 95% Breite, Preflight als 2-Spalten-Grid, Stats 2×2, Stepper kompakt
-    (Gate-„Gate"-Text und Phasen-Dauern ausgeblendet, kleinere Kreise).
-  - ≤ 500px: Gate-Knoten ganz ausgeblendet (nur 6 Phasen-Kreise + Connectoren);
-    Gate-Status bleibt im Completed-Screen sichtbar.
-- **Desktop-Höhen (iframe)**: Completed-Screen füllt in **beiden** Modi die volle
-  iframe-Höhe und scrollt intern (Fenster scrollt nie). Fullscreen hat extra
-  Bottom-Padding, damit die Chat-Leiste die Link-Buttons nicht verdeckt.
-  Running-Screen: die Activity-Commit-Liste ist der einzige scrollende Bereich
-  (`max-height`-Cap), der Rest bleibt fix.
-- **Live-Timer**, der von `startedAt` hochzählt, bei Inaktivität (>90 s ohne
-  Git-Aktivität) pausiert und nie zurückspringt. Gesamt- und Phasen-Timer.
-- **Stunden-Format in allen Timern**: `Xh Ym Zs` ab 1 h, sonst `Ym Zs` bzw. `Zs`
-  (zentrale `formatElapsed`-Funktion).
-- **Stepper** (Custom-Aufbau in `ui5-card`): Phasen- und Gate-Knoten; Farben über
-  SAP-Theme-Tokens (`--sapPositiveColor`, `--sapCriticalElementColor`, `--sapNegativeColor`,
-  `--sapInformativeColor`). Dauer je Phase farbcodiert. Gate-Dauer bewusst nicht gezeigt.
-  Top-Padding 20px; Duration-Labels am unteren Rand via `margin-top: auto`.
-- **Gate-Darstellung mit drei Zuständen** in der Completed-Phase-Summary:
-  grün ✅ (alle Tests grün), amber ⚠ (passed, nicht alle Tests), rot ❌ (failed);
-  plus optionale Erklärzeile (`gateNote`).
-- **Gate-Metriken**: `gateDurationSeconds`, `gateTestsPassed/Total`.
-- **Git-Aktivität** live (geänderte Dateien, Commits) über Server-Polling.
-- **Markdown-Viewer** für Report/Issues (Overlay in Desktop via `get-file`,
-  gerenderte Seite im Browser via `/files/:filename`). Noch Custom-UI (kein `ui5-dialog`).
-- **Standalone- vs. MCP-App-Modus** mit automatischem Fallback.
-- **Stale-Schutz**: ein „running"-State älter als 24 h wird als idle behandelt.
+### Modernisierung starten (CLI)
+
+1. User startet `modernize-ui5-app`-Skill in Claude Code CLI.
+2. Workflow erstellt Work-Branch, ruft `update-status` mit Preflight-Daten (Projekt, UI5-Version, Baseline-Findings, Branch-Namen).
+3. Dashboard-Server startet auf `:3001`, öffnet Browser. Die UI pollt `/api/status` alle 1,5 s.
+4. Pro Phase: Workflow ruft Skills, committet, pusht `update-status` mit Phasen-Fortschritt. Dashboard zeigt Live-Timer, Stepper, Finding-Zähler.
+5. Nach jeder Phase: Verification Gate (Tests). Ergebnis wird als `gateStatus`/`gateTestsPassed`/`gateTestsTotal` gepusht.
+6. Am Ende: `status:"completed"` + `deferredIssues`. Completed-Screen zeigt Phasen-Summary, Report-/Issues-Links.
+
+### Modernisierung starten (Claude Code Desktop)
+
+1. Skill prüft ob Dashboard-Server in `claude_desktop_config.json` registriert ist.
+2. Falls nein: `setup-desktop-dashboard`-Tool aufrufen → kopiert Runtime nach `~/Library/Application Support/UI5 Modernization Dashboard/<profile>/runtime/`, registriert MCP-Server in Config, launchd-Helper wartet auf User-Quit und öffnet Claude neu.
+3. **Wichtig:** Server muss in `claude_desktop_config.json` stehen (nicht nur in Plugin-`.mcp.json`), sonst rendert der Host kein Widget. Plugin-`.mcp.json` darf den Dashboard-Server **nicht** zusätzlich registrieren (Duplicate = Widget bricht).
+4. `open-dashboard` öffnet das Widget. Status-Updates laufen über `update-status` (MCP-Tool, kein HTTP).
+
+### User stoppt den Lauf
+
+1. Agent ruft `stop-status` mit optionalem `reason` → `status:"stopped"`, Fortschritt bleibt erhalten.
+2. Dashboard zeigt Stopped-Screen mit bisherigen Phasen und Stop-Grund.
+3. Reset-Button im Dashboard oder `reset-app`-Tool: verwirft uncommitted Changes (`git checkout . && git clean -fd`), wechselt auf Original-Branch, Dashboard auf idle.
+
+### User will Reset nach Abschluss
+
+1. `reset-app`-Tool aufrufen (oder Reset-Button im Dashboard).
+2. Tool liest `originalBranch`/`workBranch`/`projectPath` aus State, räumt Working Tree auf, wechselt Branch.
+3. Optional: `removeWorkBranch: true` löscht den Work-Branch.
+4. **Nie manuell** per `git checkout`/`git branch -D` — das lässt modifizierte Dateien auf dem Ziel-Branch liegen.
+
+## Technische Details
+
+- **UI5 Web Components** für alle Screens. Gezielte Imports, kein `Assets.js`. Bundle ~1320 KB inline.
+- **Theme-Bridge**: `sap_horizon`/`sap_horizon_dark`, umgeschaltet per Host-Context.
+- **Vier Screens**: Idle, Running (Dashboard), Completed, Stopped — automatischer Wechsel nach `status`.
+- **Live-Timer**: zählt von `startedAt` hoch, pausiert bei Inaktivität (>90 s ohne Git-Aktivität).
+- **Counter-Derivation**: Server und Frontend leiten `findingsFixed`/`findingsRemaining`/`overallProgress` aus Phasen-Daten ab.
+- **Stepper**: Custom-Aufbau mit Phasen- und Gate-Knoten, SAP-Theme-Tokens für Farben.
+- **Git-Aktivität**: Server pollt alle 5 s Commits und geänderte Dateien aus `projectPath` (nur HTTP-Modus).
+- **Markdown-Viewer**: Report/Issues als Overlay (Desktop via `get-file`, Browser via `/files/:filename`).
+- **Stale-Schutz**: `running`-State älter als 24 h wird als idle behandelt.
+- **Fullscreen**: Logik bereit im TS, aber blockiert durch 3P Feature-Gate `513873720` (`epitaxyMcpAppPane`). Buttons nicht im HTML bis Gate freigeschaltet.
 
 ## Bauen & Starten
 
