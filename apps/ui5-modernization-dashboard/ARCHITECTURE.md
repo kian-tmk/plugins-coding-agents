@@ -267,6 +267,9 @@ erst gebaut werden. UI-Deps (für den Build): `@ui5/webcomponents`,
 - **Desktop-Setup:** `setup-desktop-dashboard`-Tool (macOS, launchd-basiert). Locale-Bug in `processIdentity()` behoben (ps-Ausgabe war locale-abhängig).
 - **Frontend:** Kaputte Fullscreen-Erweiterung zurückgenommen; funktionierende Minimal-Form beibehalten. Polling-Idempotenz, vereinfachter Timer (server-owned startedAt), startPolling bei completed-Screen.
 - **Delivery:** `copy-to-plugin.mjs` kopiert jetzt auch desktop-setup-Artefakte + package.json.
+- **Duplicate-Server-Fix (cf647f8):** Dashboard-Server aus Plugin-`.mcp.json` entfernt. Duplicate Registrierung (Plugin + `claude_desktop_config.json`) erzeugte mehrere Server-PIDs und verhinderte Widget-Rendering. Regel: Dashboard-Server nur in app-config, nie zusätzlich in Plugin-`.mcp.json`.
+- **viewId-Entfernung (df8ba6a):** viewId-Teardown-Logik wieder entfernt — war ungetestet, unverifiziert, und nach dem Duplicate-Server-Fix nicht mehr nötig.
+- **Counter-Derivation:** Server (`writeState`) und Frontend (`renderDashboard`) leiten `findingsFixed`/`findingsRemaining`/`overallProgress` aus den Phasen-Daten ab, wenn der Agent sie nicht explizit pusht.
 
 ### 2026-10-29 — Server self-contained ins Plugin (Delivery-Fix)
 
