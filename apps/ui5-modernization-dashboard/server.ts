@@ -24,13 +24,19 @@ const DIST_DIR = path.join(PROJECT_DIR, "dist");
 
 const resourceUri = "ui://ui5-modernization/mcp-app.html";
 
+// Build identity injected by esbuild (see package.json "bundle"). Falls back to
+// "dev" when run directly via tsx. Exposed through get-status as `serverBuild` so
+// the UI can flag a stale runtime copy against its own __BUILD_VERSION__.
+declare const __BUILD_VERSION__: string | undefined;
+export const SERVER_BUILD = typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_VERSION__ : "dev";
+
 async function writeState(stateFile: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle"
     || (patch.status === "running" && existing.status !== "running");
   const now = new Date().toISOString();
   // Clocks describe received workflow events, not dates guessed by the agent.
-  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, ...fields } = patch;
+  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, mergedAt: _merged, ...fields } = patch;
   const merged: Record<string, unknown> = isNewRun
     ? { ...fields, startedAt: now }
     : { ...existing, ...fields, startedAt: existing.startedAt };
@@ -101,6 +107,11 @@ export async function resetApp(
 
   // Only act if we're still on the work branch — otherwise the user moved on, don't surprise them.
   if (current !== workBranch) {
+    // After a merge, the repo is already on the original branch — just clear the dashboard.
+    if (current === originalBranch && (state.mergeStatus as string | undefined) === "merged") {
+      await saveState({ status: "idle" }, stateFile);
+      return { ok: true, message: `Already on '${originalBranch}' — the modernization was merged. Dashboard reset to idle.` };
+    }
     return {
       ok: false,
       message: `Cannot reset: the repository is on '${current}', not the modernization branch '${workBranch}'. `
@@ -131,6 +142,78 @@ export async function resetApp(
 
   await saveState({ status: "idle" }, stateFile);
   return { ok: true, message: note };
+}
+
+export interface MergeAppResult {
+  ok: boolean;
+  message: string;
+}
+
+export async function mergeApp(
+  { stateFile = STATE_FILE }: { stateFile?: string } = {},
+): Promise<MergeAppResult> {
+  const state = (await readState(stateFile)) ?? {};
+  const projectPath = state.projectPath as string | undefined;
+  const originalBranch = state.originalBranch as string | undefined;
+  const workBranch = state.workBranch as string | undefined;
+  const status = state.status as string | undefined;
+  const mergeStatus = state.mergeStatus as string | undefined;
+
+  if (!projectPath || !originalBranch || !workBranch) {
+    return {
+      ok: false,
+      message: "Cannot merge: the run did not record a project path, original branch and work branch.",
+    };
+  }
+
+  if (status !== "completed") {
+    return { ok: false, message: "Cannot merge: the run is not completed yet." };
+  }
+
+  if (mergeStatus === "merged") {
+    return { ok: false, message: `Already merged '${workBranch}' into '${originalBranch}'.` };
+  }
+
+  const phases = Array.isArray(state.phases) ? state.phases as Record<string, unknown>[] : [];
+  const anyFailed = phases.some(
+    p => p.status === "failed" || p.gateStatus === "failed",
+  );
+  if (anyFailed) {
+    return { ok: false, message: "Cannot merge: one or more verification gates failed. Review the failures first." };
+  }
+
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: projectPath, timeout: 10000 });
+
+  let current: string;
+  try {
+    current = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+  } catch (error) {
+    return { ok: false, message: `Cannot merge: not a git repository or git failed (${(error as Error).message}).` };
+  }
+
+  if (current !== workBranch) {
+    return {
+      ok: false,
+      message: `Cannot merge: the repository is on '${current}', not the modernization branch '${workBranch}'.`,
+    };
+  }
+
+  const findingsFixed = typeof state.findingsFixed === "number" ? state.findingsFixed as number : 0;
+  const phaseCount = phases.filter(p => p.status === "completed").length;
+  const commitMessage = `chore: modernize UI5 app — ${findingsFixed} findings fixed across ${phaseCount} phases`;
+
+  try {
+    await git(["checkout", originalBranch]);
+    await git(["merge", "--no-ff", workBranch, "-m", commitMessage]);
+  } catch (error) {
+    await git(["checkout", workBranch]).catch(() => {});
+    return { ok: false, message: `Merge failed (${(error as Error).message}). Repository is back on '${workBranch}'.` };
+  }
+
+  const existing = (await readState(stateFile)) ?? {};
+  await saveState({ ...existing, mergeStatus: "merged", mergedAt: new Date().toISOString() }, stateFile);
+
+  return { ok: true, message: `Merged '${workBranch}' into '${originalBranch}'. ${commitMessage}` };
 }
 
 export function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {}): McpServer {
@@ -166,7 +249,7 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
     const state = await readState(stateFile);
     return {
       content: [{ type: "text", text: state ? `Status: ${state.status}` : "No run active." }],
-      structuredContent: state ?? { status: "idle" },
+      structuredContent: { ...(state ?? { status: "idle" }), serverBuild: SERVER_BUILD },
     };
   };
 
@@ -251,6 +334,30 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
       return {
         content: [{ type: "text", text: result.message }],
         structuredContent: { status: "idle" },
+        isError: result.ok ? undefined : true,
+      };
+    },
+  );
+
+  // Tool: merge-app — merge the modernization branch into the original branch
+  server.registerTool(
+    "merge-app",
+    {
+      title: "Merge Modernized App",
+      description:
+        "Merge the modernization work branch into the user's original branch using git merge --no-ff. "
+        + "Only available when the run is completed and all verification gates passed. "
+        + "The merge commit summarizes the run (findings fixed, phases completed). "
+        + "After merging, the dashboard stays on the completed screen with mergeStatus:'merged'.",
+      inputSchema: z.object({}),
+      outputSchema: stateSchema,
+    },
+    async (): Promise<CallToolResult> => {
+      const result = await mergeApp({ stateFile });
+      const state = await readState(stateFile);
+      return {
+        content: [{ type: "text", text: result.message }],
+        structuredContent: state ?? { status: "idle" },
         isError: result.ok ? undefined : true,
       };
     },

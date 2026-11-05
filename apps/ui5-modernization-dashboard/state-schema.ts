@@ -27,11 +27,14 @@ export const stateSchema = z.object({
     file: z.string(), rule: z.string(), message: z.string(), reason: z.string(),
   })),
   reportPath: z.string(), issuesPath: z.string(),
+  serverBuild: z.string().describe("Server build identity; read-only, for stale-runtime detection."),
   startedAt: z.string().nullable().describe("Server-managed run start time; omit from updates."),
   completedAt: z.string().nullable().describe("Server-managed completion time; omit from updates."),
   stoppedAt: z.string().nullable().describe("Server-managed stop time; omit from updates."),
   stopReason: z.string().nullable().describe("Free-text reason why the run was stopped early."),
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
+  mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),
+  mergeStatus: z.enum(["pending", "merged", "skipped"]).nullable(),
   lastGitActivityAt: z.string().nullable(),
   gitActivity: z.object({
     commits: z.array(z.object({ hash: z.string(), message: z.string(), ts: z.string() })),
@@ -41,6 +44,6 @@ export const stateSchema = z.object({
 
 export const updateSchema = stateSchema.refine(
   value => Object.keys(value).some(key => key in stateSchema.shape
-    && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt"].includes(key)),
+    && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt", "mergedAt"].includes(key)),
   "Supply at least one writable modernization status field. Empty or clock-only updates are not saved.",
 );

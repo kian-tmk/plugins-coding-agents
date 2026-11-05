@@ -300,6 +300,7 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 | Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
 | User stops the run early | Call the **`stop-status`** tool (optional `reason`) — do NOT push `status:"completed"`. Preserves remaining findings, phases and deferred issues on the end screen. |
 | User asks to reset/undo | Call the **`reset-app`** tool — discards uncommitted changes, switches back to original branch, resets dashboard to idle. Never do manual git checkout/branch -D. |
+| Run complete, clean (auto-merge) | Call the **`merge-app`** tool — merges work branch into original via `git merge --no-ff`. Do NOT merge manually. |
 
 **Rule:** push `currentActivity` whenever the agent switches tasks — before launching a sub-agent, after it returns, before running the linter, before committing. Every meaningful action should be visible in the dashboard within seconds.
 
@@ -324,7 +325,7 @@ Never push `status:"completed"` or `status:"idle"` for a user stop. It is fire-a
 
 ## Git Commit Strategy
 
-The run works on a dedicated `ui5-modernization-*` branch (created in Step 1.0); the user's original branch stays untouched and serves as the backup. On success, the user merges the branch into their original branch; to abort, the dashboard reset switches back to it. One commit per phase, five total (plus documentation). Stage only files modified in that phase — never `git add -A`.
+The run works on a dedicated `ui5-modernization-*` branch (created in Step 1.0); the user's original branch stays untouched and serves as the backup. On a clean run (all gates passed, no deferred issues), the agent auto-merges via the `merge-app` tool; otherwise the user merges from the dashboard or manually. To abort, the dashboard reset switches back to the original branch. One commit per phase, five total (plus documentation). Stage only files modified in that phase — never `git add -A`.
 
 **Never stage:** `headless-chrome.json`, `pom.xml` (dev profile patch), `.gitignore` (local test infra).
 
@@ -894,6 +895,21 @@ Push run completion after the docs commit:
 ```bash
 push_status "{\"status\":\"completed\",\"currentActivity\":\"Modernization complete\",\"overallProgress\":100,\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"findingsFixed\":$FIXED_TOTAL,\"findingsRemaining\":0,\"reportPath\":\"$PROJECT_PATH/MODERNIZATION-REPORT.md\",\"issuesPath\":\"$PROJECT_PATH/MODERNIZATION-ISSUES.md\",\"phases\":$PHASES_JSON,\"deferredIssues\":$DEFERRED_JSON}"
 ```
+
+## Post-Completion: Merge
+
+After pushing `status:"completed"`, evaluate the merge conditions:
+
+**Case 1 — Clean run:** All gates passed, 0 deferred issues, 0 findings remaining.
+→ Call the **`merge-app`** tool. Inform user: "Merged {workBranch} into {originalBranch}."
+
+**Case 2 — Deferred issues:** Gates passed, but `deferredIssues` non-empty.
+→ Do NOT auto-merge. Inform user about deferred issues. The dashboard shows a merge button so the user can merge after reviewing.
+
+**Case 3 — Gate failed:** Any phase has `gateStatus:"failed"`.
+→ Do NOT merge. Inform user about failures.
+
+**Critical:** Always use the `merge-app` tool, never `git merge` manually. The tool validates preconditions, creates the merge commit message, and updates the dashboard state.
 
 ## Context Management
 

@@ -66,6 +66,7 @@ import "@ui5/webcomponents-icons/dist/trend-up.js";
 import "@ui5/webcomponents-icons/dist/source-code.js";
 import "@ui5/webcomponents-icons/dist/developer-settings.js";
 import "@ui5/webcomponents-icons/dist/download.js";
+import "@ui5/webcomponents-icons/dist/combine.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
 // Must come AFTER all registerThemePropertiesLoader calls so the theme can resolve.
@@ -146,7 +147,15 @@ interface ModernizationState {
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
+  mergedAt: string | null;
+  mergeStatus: "pending" | "merged" | "skipped" | null;
+  serverBuild: string | null;
 }
+
+// Build identity burned in at build time (vite define). Compared against the
+// server's `serverBuild` to warn when the Desktop loads a stale runtime copy.
+declare const __BUILD_VERSION__: string | undefined;
+const UI_BUILD: string = typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_VERSION__ : "dev";
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -692,16 +701,22 @@ function renderCompleted(state: ModernizationState) {
     });
   });
 
+  // Merge: offer to merge the work branch into the original branch.
+  renderMergeStatus(state);
+
   // Reset: only offered when the run recorded a dedicated modernization branch.
   const resetEl = document.getElementById("completed-reset")!;
   if (state.workBranch && state.originalBranch) {
+    const merged = state.mergeStatus === "merged";
+    const resetLabel = merged ? "Clear dashboard" : "Reset app to original state";
+    const resetNote = merged
+      ? `Merged into <code>${escapeHtml(state.originalBranch)}</code>. Clear the dashboard to start fresh.`
+      : `Modernization ran on <code>${escapeHtml(state.workBranch)}</code>. `
+        + `Reset switches <code>${escapeHtml(state.projectPath?.split("/").pop() ?? "the project")}</code> `
+        + `back to <code>${escapeHtml(state.originalBranch)}</code>; your work stays on the branch as a backup.`;
     resetEl.innerHTML = `
-      <div class="reset-note">
-        Modernization ran on <code>${escapeHtml(state.workBranch)}</code>.
-        Reset switches <code>${escapeHtml(state.projectPath?.split("/").pop() ?? "the project")}</code>
-        back to <code>${escapeHtml(state.originalBranch)}</code>; your work stays on the branch as a backup.
-      </div>
-      <ui5-button id="btn-reset-app" icon="history" design="Transparent">Reset app to original state</ui5-button>`;
+      <div class="reset-note">${resetNote}</div>
+      <ui5-button id="btn-reset-app" icon="history" design="Transparent">${resetLabel}</ui5-button>`;
     const btn = document.getElementById("btn-reset-app");
     btn?.addEventListener("click", () => resetApp(state));
   } else {
@@ -709,8 +724,141 @@ function renderCompleted(state: ModernizationState) {
   }
 }
 
+// Render the merge section on the completed screen.
+// Three cases: clean (auto-merge ready), deferred (prompt user), gate failed (blocked).
+function renderMergeStatus(state: ModernizationState, justMerged = false) {
+  const mergeEl = document.getElementById("completed-merge")!;
+  if (!state.workBranch || !state.originalBranch || state.status === "stopped") {
+    mergeEl.innerHTML = "";
+    return;
+  }
+
+  const phases = state.phases ?? [];
+  const anyFailed = phases.some(p => p.status === "failed" || p.gateStatus === "failed");
+  const hasDeferred = (state.deferredIssues?.length ?? 0) > 0;
+
+  if (state.mergeStatus === "merged" || justMerged) {
+    mergeEl.innerHTML = `
+      <div class="merge-note merge-note-success">
+        <ui5-icon name="combine"></ui5-icon>
+        Merged <code>${escapeHtml(state.workBranch)}</code> into <code>${escapeHtml(state.originalBranch)}</code>.
+      </div>`;
+    return;
+  }
+
+  if (anyFailed) {
+    mergeEl.innerHTML = `
+      <div class="merge-note merge-note-blocked">
+        <ui5-icon name="error"></ui5-icon>
+        Auto-merge blocked — one or more verification gates failed. Review the failures first.
+      </div>`;
+    return;
+  }
+
+  const btnDesign = hasDeferred ? "Default" : "Emphasized";
+  const note = hasDeferred
+    ? `<div class="merge-note merge-note-warn">
+        <ui5-icon name="alert"></ui5-icon>
+        ${state.deferredIssues!.length} deferred issue${state.deferredIssues!.length !== 1 ? "s" : ""} — review before merging.
+      </div>`
+    : `<div class="merge-note merge-note-clean">
+        <ui5-icon name="sys-enter-2"></ui5-icon>
+        All gates passed — ready to merge.
+      </div>`;
+
+  mergeEl.innerHTML = `
+    ${note}
+    <ui5-button id="btn-merge-app" icon="combine" design="${btnDesign}">Merge into ${escapeHtml(state.originalBranch)}</ui5-button>`;
+  document.getElementById("btn-merge-app")?.addEventListener("click", () => mergeApp(state));
+}
+
+// Merge the modernization work branch into the original branch.
+// Standalone/CLI → REST; Desktop → MCP tool.
+// ── Reset / merge actions ─────────────────────────────────────────────────────
+// Both buttons talk to the server the same way: REST in standalone/CLI, the MCP
+// tool bridge in Desktop. The Desktop bridge can go stale after a server restart
+// and then hang silently — so every call is bounded by a client-side timeout and
+// every outcome is shown inline in the widget (not only via a dismissable alert).
+
+const ACTION_TIMEOUT_MS = 15000;
+
+function setActionStatus(kind: "working" | "ok" | "error", text: string) {
+  const el = document.getElementById("completed-action-status");
+  if (!el) return;
+  el.className = `completed-action-status status-${kind}`;
+  const icon = kind === "working" ? "" : kind === "ok" ? "✓ " : "⚠ ";
+  el.textContent = `${icon}${text}`;
+}
+
+interface ActionOutcome { failed: boolean; message: string; }
+
+// Returns {failed, message}; never throws. A timeout or dead bridge is reported
+// as a failure with an explanatory message rather than a silent hang.
+async function callAction(restPath: string, toolName: string): Promise<ActionOutcome> {
+  try {
+    if (standaloneMode) {
+      const res = await fetch(`http://localhost:3001${restPath}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(ACTION_TIMEOUT_MS),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { failed: !res.ok || data?.ok === false, message: data?.message ?? `HTTP ${res.status}` };
+    }
+    const result = await app.callServerTool(
+      { name: toolName, arguments: {} },
+      { signal: AbortSignal.timeout(ACTION_TIMEOUT_MS) },
+    ) as any;
+    return { failed: result?.isError === true, message: result?.content?.[0]?.text ?? "" };
+  } catch (err) {
+    const timedOut = err instanceof DOMException && err.name === "TimeoutError";
+    return {
+      failed: true,
+      message: timedOut
+        ? "No response from the dashboard server (timed out). The connection may have dropped — "
+          + "reopen the dashboard and try again, or ask the agent to run it."
+        : `Could not reach the dashboard server: ${String(err)}`,
+    };
+  }
+}
+
+async function mergeApp(state: ModernizationState) {
+  const hasDeferred = (state.deferredIssues?.length ?? 0) > 0;
+  if (hasDeferred) {
+    const ok = window.confirm(
+      `There are ${state.deferredIssues!.length} deferred issue(s) that were not resolved.\n\n`
+      + `Merge anyway into "${state.originalBranch}"?`,
+    );
+    if (!ok) return;
+  }
+
+  const btn = document.getElementById("btn-merge-app") as any;
+  if (btn) { btn.disabled = true; }
+  setActionStatus("working", `Merging into ${state.originalBranch}…`);
+
+  const { failed, message } = await callAction("/api/merge-app", "merge-app");
+  if (failed) {
+    setActionStatus("error", message || "Merge not performed.");
+    window.alert(`Merge not performed.\n\n${message}`);
+    if (btn) { btn.disabled = false; }
+    return;
+  }
+
+  setActionStatus("ok", message || `Merged into ${state.originalBranch}.`);
+  // Success: update the merge section in-place (don't switch to idle).
+  state.mergeStatus = "merged";
+  renderMergeStatus(state, true);
+  // Update reset button text to reflect post-merge state.
+  const resetEl = document.getElementById("completed-reset")!;
+  resetEl.innerHTML = `
+    <div class="reset-note">Merged into <code>${escapeHtml(state.originalBranch!)}</code>. Clear the dashboard to start fresh.</div>
+    <ui5-button id="btn-reset-app" icon="history" design="Transparent">Clear dashboard</ui5-button>`;
+  document.getElementById("btn-reset-app")?.addEventListener("click", () => resetApp(state));
+}
+
 // Switch the repository back to the original branch, undoing the whole run.
-// Standalone/CLI → REST; Desktop → MCP tool. Work branch is kept as a backup.
+// Work branch is kept as a backup.
 async function resetApp(state: ModernizationState) {
   const ok = window.confirm(
     `Reset the app to its original state?\n\n`
@@ -721,35 +869,19 @@ async function resetApp(state: ModernizationState) {
 
   const btn = document.getElementById("btn-reset-app") as any;
   if (btn) { btn.disabled = true; }
+  setActionStatus("working", `Switching back to ${state.originalBranch}…`);
 
-  try {
-    let message = "";
-    let failed = false;
-    if (standaloneMode) {
-      const res = await fetch("http://localhost:3001/api/reset-app", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json().catch(() => ({}));
-      failed = !res.ok || data?.ok === false;
-      message = data?.message ?? `HTTP ${res.status}`;
-    } else {
-      const result = await app.callServerTool({ name: "reset-app", arguments: {} }) as any;
-      failed = result?.isError === true;
-      message = result?.content?.[0]?.text ?? "";
-    }
-    if (failed) {
-      window.alert(`Reset not performed.\n\n${message}`);
-      if (btn) { btn.disabled = false; }
-      return;
-    }
-    // Success: server set state to idle — reflect it immediately.
-    showScreen("idle");
-  } catch (err) {
-    window.alert(`Reset failed.\n\n${String(err)}`);
+  const { failed, message } = await callAction("/api/reset-app", "reset-app");
+  if (failed) {
+    setActionStatus("error", message || "Reset not performed.");
+    window.alert(`Reset not performed.\n\n${message}`);
     if (btn) { btn.disabled = false; }
+    return;
   }
+
+  // Success: server set state to idle — reflect it immediately.
+  setActionStatus("ok", message || "Reset complete.");
+  showScreen("idle");
 }
 
 // ── State handling ────────────────────────────────────────────────────────────
@@ -781,9 +913,25 @@ function normalizePhase(p: Record<string, unknown>, index: number): PhaseState {
 
 let lastStatus: string | null = null;
 
+// Show the UI build, and warn when the server runs a different build — the
+// classic "Desktop loaded a stale runtime copy" symptom.
+function renderBuildInfo(serverBuild: string | null) {
+  const el = document.getElementById("build-info");
+  if (!el) return;
+  if (serverBuild && serverBuild !== UI_BUILD) {
+    el.className = "build-info build-mismatch";
+    el.textContent = `UI ${UI_BUILD} · server ${serverBuild} — Versionen weichen ab (Server veraltet?)`;
+  } else {
+    el.className = "build-info";
+    el.textContent = `build ${UI_BUILD}`;
+  }
+}
+
 function applyState(raw: unknown) {
   if (!raw || typeof raw !== "object") return;
   const state = raw as ModernizationState;
+
+  renderBuildInfo(state.serverBuild ?? null);
 
   if (Array.isArray(state.phases)) {
     state.phases = state.phases.map((p, i) =>
@@ -927,6 +1075,40 @@ async function fetchRestStatus(): Promise<ModernizationState | null> {
 // ── Polling ───────────────────────────────────────────────────────────────────
 
 let polling = false;
+let connectionLost = false;   // Desktop MCP bridge went dead; poll() drives a reconnect.
+let reconnecting = false;     // guard so only one reconnect runs at a time.
+let pollDelay = 1500;         // backs off while the connection is down.
+
+// Show a small, honest connection indicator. In standalone (CLI) mode the bridge
+// cannot "die" the same way, so this is primarily for the Desktop widget.
+function setConnectionStatus(state: "ok" | "lost" | "reconnecting") {
+  const el = document.getElementById("conn-status");
+  if (!el) return;
+  if (state === "ok") { el.textContent = ""; el.className = "conn-status"; return; }
+  el.className = `conn-status conn-${state}`;
+  el.textContent = state === "lost"
+    ? "⚠ Verbindung zum Dashboard-Server verloren"
+    : "… verbinde neu";
+}
+
+// Desktop only: the MCP bridge does not reconnect itself. Re-run app.connect()
+// once, and on success resume normal polling cadence.
+async function reconnect() {
+  if (reconnecting || standaloneMode) return;
+  reconnecting = true;
+  setConnectionStatus("reconnecting");
+  try {
+    await app.connect();
+    connectionLost = false;
+    pollDelay = 1500;
+    setConnectionStatus("ok");
+    if (!polling) startPolling();
+  } catch {
+    pollDelay = Math.min(pollDelay * 2, 8000); // back off, try again next tick
+  } finally {
+    reconnecting = false;
+  }
+}
 
 async function poll() {
   if (!polling) return;
@@ -935,13 +1117,24 @@ async function poll() {
       const state = await fetchRestStatus();
       if (state) applyState(state);
     } else {
-      const result = await app.callServerTool({ name: "get-status", arguments: {} });
+      const result = await app.callServerTool(
+        { name: "get-status", arguments: {} },
+        { signal: AbortSignal.timeout(5000) },
+      );
       applyState(result.structuredContent);
+      if (connectionLost) { connectionLost = false; pollDelay = 1500; setConnectionStatus("ok"); }
     }
   } catch (err) {
-    console.error("poll error:", err);
+    // A dead Desktop bridge surfaces here (timeout / send failure). Instead of
+    // polling a corpse forever, flag it and drive a reconnect.
+    if (!standaloneMode) {
+      if (!connectionLost) { connectionLost = true; setConnectionStatus("lost"); }
+      reconnect();
+    } else {
+      console.error("poll error:", err);
+    }
   }
-  if (polling) setTimeout(poll, 1500);
+  if (polling) setTimeout(poll, pollDelay);
 }
 
 function startPolling() {

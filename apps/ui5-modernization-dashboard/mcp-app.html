@@ -183,8 +183,14 @@
           <!-- Links -->
           <div class="completed-links" id="completed-links"></div>
 
+          <!-- Merge: merge the work branch into the original branch -->
+          <div class="completed-merge" id="completed-merge"></div>
+
           <!-- Reset: switch the repo back to the original branch -->
           <div class="completed-reset" id="completed-reset"></div>
+
+          <!-- Always-visible feedback for reset/merge actions (survives missed alerts) -->
+          <div class="completed-action-status" id="completed-action-status" role="status" aria-live="polite"></div>
 
         </div>
       </div>
@@ -198,6 +204,12 @@
           </div>
           <div id="md-body" class="md-body"></div>
         </div>
+      </div>
+
+      <!-- Persistent footer: connection state + build identity (stale-runtime diagnosis) -->
+      <div class="app-footer">
+        <span id="conn-status" class="conn-status" role="status" aria-live="polite"></span>
+        <span id="build-info" class="build-info"></span>
       </div>
 
     </div>

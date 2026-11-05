@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { marked } from "marked";
-import { createServer, resetApp } from "./server.js";
+import { createServer, resetApp, mergeApp, SERVER_BUILD } from "./server.js";
 import { readState, saveState, STATE_FILE } from "./state-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -165,9 +165,9 @@ async function startStreamableHTTPServer(
       const state = JSON.parse(raw);
       // Kick off git polling if a run is active
       if (state?.status === "running") startGitPolling();
-      res.json(state);
+      res.json({ ...state, serverBuild: SERVER_BUILD });
     } catch {
-      res.json({ status: "idle" });
+      res.json({ status: "idle", serverBuild: SERVER_BUILD });
     }
   });
 
@@ -198,6 +198,13 @@ async function startStreamableHTTPServer(
     stopGitPolling();
     const removeWorkBranch = req.body?.removeWorkBranch === true;
     const result = await resetApp({ removeWorkBranch });
+    res.status(result.ok ? 200 : 409).json(result);
+  });
+
+  // REST API: merge the modernization branch into the original branch.
+  app.post("/api/merge-app", async (_req: Request, res: Response) => {
+    stopGitPolling();
+    const result = await mergeApp();
     res.status(result.ok ? 200 : 409).json(result);
   });
 

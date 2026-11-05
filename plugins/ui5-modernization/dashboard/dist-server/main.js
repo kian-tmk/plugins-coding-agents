@@ -61458,11 +61458,14 @@ var stateSchema = external_exports.object({
   })),
   reportPath: external_exports.string(),
   issuesPath: external_exports.string(),
+  serverBuild: external_exports.string().describe("Server build identity; read-only, for stale-runtime detection."),
   startedAt: external_exports.string().nullable().describe("Server-managed run start time; omit from updates."),
   completedAt: external_exports.string().nullable().describe("Server-managed completion time; omit from updates."),
   stoppedAt: external_exports.string().nullable().describe("Server-managed stop time; omit from updates."),
   stopReason: external_exports.string().nullable().describe("Free-text reason why the run was stopped early."),
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
+  mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
+  mergeStatus: external_exports.enum(["pending", "merged", "skipped"]).nullable(),
   lastGitActivityAt: external_exports.string().nullable(),
   gitActivity: external_exports.object({
     commits: external_exports.array(external_exports.object({ hash: external_exports.string(), message: external_exports.string(), ts: external_exports.string() })),
@@ -61471,7 +61474,7 @@ var stateSchema = external_exports.object({
   }).nullable()
 }).partial().passthrough();
 var updateSchema = stateSchema.refine(
-  (value) => Object.keys(value).some((key) => key in stateSchema.shape && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt"].includes(key)),
+  (value) => Object.keys(value).some((key) => key in stateSchema.shape && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt", "mergedAt"].includes(key)),
   "Supply at least one writable modernization status field. Empty or clock-only updates are not saved."
 );
 
@@ -61505,11 +61508,12 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
+var SERVER_BUILD = true ? "7ce724d \xB7 2026-11-05T15:02" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, ...fields } = patch;
+  const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, mergedAt: _merged, ...fields } = patch;
   const merged = isNewRun ? { ...fields, startedAt: now } : { ...existing, ...fields, startedAt: existing.startedAt };
   const phaseChanged = fields.currentPhase !== void 0 && (isNewRun || fields.currentPhase !== existing.currentPhase);
   if (phaseChanged) merged.phaseStartedAt = Number(fields.currentPhase) > 0 ? now : null;
@@ -61556,6 +61560,10 @@ async function resetApp({ removeWorkBranch = false, stateFile = STATE_FILE } = {
     return { ok: false, message: `Cannot reset: not a git repository or git failed (${error62.message}).` };
   }
   if (current !== workBranch) {
+    if (current === originalBranch && state.mergeStatus === "merged") {
+      await saveState({ status: "idle" }, stateFile);
+      return { ok: true, message: `Already on '${originalBranch}' \u2014 the modernization was merged. Dashboard reset to idle.` };
+    }
     return {
       ok: false,
       message: `Cannot reset: the repository is on '${current}', not the modernization branch '${workBranch}'. Switch back manually if you intend to reset. Nothing was changed.`
@@ -61579,6 +61587,60 @@ async function resetApp({ removeWorkBranch = false, stateFile = STATE_FILE } = {
   }
   await saveState({ status: "idle" }, stateFile);
   return { ok: true, message: note };
+}
+async function mergeApp({ stateFile = STATE_FILE } = {}) {
+  const state = await readState(stateFile) ?? {};
+  const projectPath = state.projectPath;
+  const originalBranch = state.originalBranch;
+  const workBranch = state.workBranch;
+  const status = state.status;
+  const mergeStatus = state.mergeStatus;
+  if (!projectPath || !originalBranch || !workBranch) {
+    return {
+      ok: false,
+      message: "Cannot merge: the run did not record a project path, original branch and work branch."
+    };
+  }
+  if (status !== "completed") {
+    return { ok: false, message: "Cannot merge: the run is not completed yet." };
+  }
+  if (mergeStatus === "merged") {
+    return { ok: false, message: `Already merged '${workBranch}' into '${originalBranch}'.` };
+  }
+  const phases = Array.isArray(state.phases) ? state.phases : [];
+  const anyFailed = phases.some(
+    (p) => p.status === "failed" || p.gateStatus === "failed"
+  );
+  if (anyFailed) {
+    return { ok: false, message: "Cannot merge: one or more verification gates failed. Review the failures first." };
+  }
+  const git = (args) => execFileAsync("git", args, { cwd: projectPath, timeout: 1e4 });
+  let current;
+  try {
+    current = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+  } catch (error62) {
+    return { ok: false, message: `Cannot merge: not a git repository or git failed (${error62.message}).` };
+  }
+  if (current !== workBranch) {
+    return {
+      ok: false,
+      message: `Cannot merge: the repository is on '${current}', not the modernization branch '${workBranch}'.`
+    };
+  }
+  const findingsFixed = typeof state.findingsFixed === "number" ? state.findingsFixed : 0;
+  const phaseCount = phases.filter((p) => p.status === "completed").length;
+  const commitMessage = `chore: modernize UI5 app \u2014 ${findingsFixed} findings fixed across ${phaseCount} phases`;
+  try {
+    await git(["checkout", originalBranch]);
+    await git(["merge", "--no-ff", workBranch, "-m", commitMessage]);
+  } catch (error62) {
+    await git(["checkout", workBranch]).catch(() => {
+    });
+    return { ok: false, message: `Merge failed (${error62.message}). Repository is back on '${workBranch}'.` };
+  }
+  const existing = await readState(stateFile) ?? {};
+  await saveState({ ...existing, mergeStatus: "merged", mergedAt: (/* @__PURE__ */ new Date()).toISOString() }, stateFile);
+  return { ok: true, message: `Merged '${workBranch}' into '${originalBranch}'. ${commitMessage}` };
 }
 function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {}) {
   const server = new McpServer({
@@ -61610,7 +61672,7 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
     const state = await readState(stateFile);
     return {
       content: [{ type: "text", text: state ? `Status: ${state.status}` : "No run active." }],
-      structuredContent: state ?? { status: "idle" }
+      structuredContent: { ...state ?? { status: "idle" }, serverBuild: SERVER_BUILD }
     };
   };
   j2(
@@ -61681,6 +61743,24 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
       return {
         content: [{ type: "text", text: result.message }],
         structuredContent: { status: "idle" },
+        isError: result.ok ? void 0 : true
+      };
+    }
+  );
+  server.registerTool(
+    "merge-app",
+    {
+      title: "Merge Modernized App",
+      description: "Merge the modernization work branch into the user's original branch using git merge --no-ff. Only available when the run is completed and all verification gates passed. The merge commit summarizes the run (findings fixed, phases completed). After merging, the dashboard stays on the completed screen with mergeStatus:'merged'.",
+      inputSchema: external_exports.object({}),
+      outputSchema: stateSchema
+    },
+    async () => {
+      const result = await mergeApp({ stateFile });
+      const state = await readState(stateFile);
+      return {
+        content: [{ type: "text", text: result.message }],
+        structuredContent: state ?? { status: "idle" },
         isError: result.ok ? void 0 : true
       };
     }
@@ -61876,9 +61956,9 @@ async function startStreamableHTTPServer(factory) {
       const raw = await fs3.readFile(STATE_FILE, "utf-8");
       const state = JSON.parse(raw);
       if (state?.status === "running") startGitPolling();
-      res.json(state);
+      res.json({ ...state, serverBuild: SERVER_BUILD });
     } catch {
-      res.json({ status: "idle" });
+      res.json({ status: "idle", serverBuild: SERVER_BUILD });
     }
   });
   app.post("/api/reset", async (_req, res) => {
@@ -61903,6 +61983,11 @@ async function startStreamableHTTPServer(factory) {
     stopGitPolling();
     const removeWorkBranch = req.body?.removeWorkBranch === true;
     const result = await resetApp({ removeWorkBranch });
+    res.status(result.ok ? 200 : 409).json(result);
+  });
+  app.post("/api/merge-app", async (_req, res) => {
+    stopGitPolling();
+    const result = await mergeApp();
     res.status(result.ok ? 200 : 409).json(result);
   });
   app.all("/mcp", async (req, res) => {

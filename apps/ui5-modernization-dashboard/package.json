@@ -15,7 +15,7 @@
     "dev": "cross-env NODE_ENV=development concurrently \"npm run watch\" \"npm run serve\"",
     "start": "cross-env NODE_ENV=development npm run build && npm run serve",
     "simulate": "tsx simulate.ts",
-    "bundle": "cross-env INPUT=mcp-app.html vite build && esbuild main.ts --bundle --platform=node --format=esm --packages=bundle --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\" --outfile=dist-server/main.js",
+    "bundle": "cross-env INPUT=mcp-app.html vite build && node -e \"const{execSync}=require('node:child_process');let h='dev';try{h=execSync('git rev-parse --short HEAD').toString().trim()}catch{}; const v=h+' · '+new Date().toISOString().slice(0,16); execSync('esbuild main.ts --bundle --platform=node --format=esm --packages=bundle --define:__BUILD_VERSION__='+JSON.stringify(JSON.stringify(v))+' --banner:js=\\\"import{createRequire}from\\'node:module\\';const require=createRequire(import.meta.url);\\\" --outfile=dist-server/main.js',{stdio:'inherit'})\"",
     "deliver": "npm run bundle && node scripts/copy-to-plugin.mjs"
   },
   "dependencies": {

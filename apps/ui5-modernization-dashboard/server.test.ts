@@ -52,7 +52,7 @@ test("one explicit dashboard opening followed by 20 updates and polls exposes on
     "open-dashboard",
   ]);
   const opened = await client.callTool({ name: "open-dashboard", arguments: {} });
-  assert.deepEqual(opened.structuredContent, { status: "idle" });
+  assert.deepEqual(opened.structuredContent, { status: "idle", serverBuild: "dev" });
   const startedAt = "2026-11-02T12:00:00.000Z";
   let serverStartedAt: unknown;
   for (let progress = 1; progress <= 20; progress++) {
@@ -61,7 +61,9 @@ test("one explicit dashboard opening followed by 20 updates and polls exposes on
       arguments: { status: "running", overallProgress: progress, startedAt },
     });
     const polled = await client.callTool({ name: "get-status", arguments: {} });
-    assert.deepEqual(polled.structuredContent, updated.structuredContent);
+    // get-status adds serverBuild (not persisted); update-status does not — compare without it.
+    assert.deepEqual({ ...polled.structuredContent, serverBuild: undefined }, { ...updated.structuredContent, serverBuild: undefined });
+    assert.equal(polled.structuredContent?.serverBuild, "dev");
     assert.equal(polled.structuredContent?.overallProgress, progress);
     serverStartedAt ??= polled.structuredContent?.startedAt;
     assert.equal(polled.structuredContent?.startedAt, serverStartedAt);
@@ -79,7 +81,7 @@ test("one explicit dashboard opening followed by 20 updates and polls exposes on
   assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "completed");
   const reset = await client.callTool({ name: "reset-status", arguments: {} });
   assert.deepEqual(reset.structuredContent, { status: "idle" });
-  assert.deepEqual((await client.callTool({ name: "get-status", arguments: {} })).structuredContent, { status: "idle" });
+  assert.deepEqual((await client.callTool({ name: "get-status", arguments: {} })).structuredContent, { status: "idle", serverBuild: "dev" });
   assert.equal(reset._meta?.ui, undefined);
   const rejected = await client.callTool({ name: "update-status", arguments: {} });
   assert.equal(rejected.isError, true);
@@ -209,6 +211,163 @@ test("reset-app refuses cleanly when no branches were recorded", async (t) => {
   assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "stopped");
 });
 
+test("merge-app merges work branch into original", async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), "ui5-merge-repo-"));
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-merge-state-"));
+  const stateFile = path.join(stateDir, "state.json");
+  const { originalBranch, workBranch } = await makeRepo(repo);
+
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "merge-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(repo, { recursive: true, force: true });
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+
+  // Seed a completed run with all gates passed.
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", projectPath: repo, originalBranch, workBranch, linterBaseline: 10,
+      findingsFixed: 10, findingsRemaining: 0,
+      phases: [{ id: 1, name: "Phase 1", status: "completed", gateStatus: "passed" }],
+    },
+  });
+  await client.callTool({ name: "update-status", arguments: { status: "completed" } });
+
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: repo });
+  assert.equal((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(), workBranch, "starts on work branch");
+
+  const merge = await client.callTool({ name: "merge-app", arguments: {} });
+  assert.notEqual(merge.isError, true);
+
+  // Repo is now on the original branch, with the modernized content (merged).
+  assert.equal((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(), originalBranch);
+  assert.equal(await readFile(path.join(repo, "app.js"), "utf8"), "// modernized\n");
+  // The merge commit exists (--no-ff creates a merge commit even for fast-forward).
+  const log = (await git(["log", "--oneline", "-1"])).stdout;
+  assert.ok(log.includes("modernize UI5 app"), `merge commit message: ${log.trim()}`);
+  // State reflects the merge.
+  const state = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
+  assert.equal(state.mergeStatus, "merged");
+  assert.ok(state.mergedAt, "mergedAt is set");
+  assert.equal(state.status, "completed", "status stays completed, not idle");
+});
+
+test("merge-app refuses when gates failed", async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), "ui5-merge-fail-repo-"));
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-merge-fail-state-"));
+  const stateFile = path.join(stateDir, "state.json");
+  const { originalBranch, workBranch } = await makeRepo(repo);
+
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "merge-fail-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(repo, { recursive: true, force: true });
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", projectPath: repo, originalBranch, workBranch, linterBaseline: 10,
+      phases: [{ id: 1, name: "Phase 1", status: "completed", gateStatus: "failed" }],
+    },
+  });
+  await client.callTool({ name: "update-status", arguments: { status: "completed" } });
+
+  const merge = await client.callTool({ name: "merge-app", arguments: {} });
+  assert.equal(merge.isError, true);
+  // Repo stays on the work branch.
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: repo });
+  assert.equal((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(), workBranch);
+});
+
+test("merge-app refuses when already merged", async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), "ui5-merge-dup-repo-"));
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-merge-dup-state-"));
+  const stateFile = path.join(stateDir, "state.json");
+  const { originalBranch, workBranch } = await makeRepo(repo);
+
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "merge-dup-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(repo, { recursive: true, force: true });
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", projectPath: repo, originalBranch, workBranch, linterBaseline: 10,
+      findingsFixed: 10, findingsRemaining: 0,
+      phases: [{ id: 1, name: "Phase 1", status: "completed", gateStatus: "passed" }],
+    },
+  });
+  await client.callTool({ name: "update-status", arguments: { status: "completed" } });
+
+  // First merge succeeds.
+  const first = await client.callTool({ name: "merge-app", arguments: {} });
+  assert.notEqual(first.isError, true);
+
+  // Second merge is refused.
+  const second = await client.callTool({ name: "merge-app", arguments: {} });
+  assert.equal(second.isError, true);
+});
+
+test("reset-app handles post-merge state", async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), "ui5-merge-reset-repo-"));
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-merge-reset-state-"));
+  const stateFile = path.join(stateDir, "state.json");
+  const { originalBranch, workBranch } = await makeRepo(repo);
+
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "merge-reset-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(repo, { recursive: true, force: true });
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", projectPath: repo, originalBranch, workBranch, linterBaseline: 10,
+      findingsFixed: 10, findingsRemaining: 0,
+      phases: [{ id: 1, name: "Phase 1", status: "completed", gateStatus: "passed" }],
+    },
+  });
+  await client.callTool({ name: "update-status", arguments: { status: "completed" } });
+  await client.callTool({ name: "merge-app", arguments: {} });
+
+  // After merge, we're on the original branch. Reset should just clear the dashboard.
+  const git = (args: string[]) => execFileAsync("git", args, { cwd: repo });
+  assert.equal((await git(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(), originalBranch);
+
+  const reset = await client.callTool({ name: "reset-app", arguments: {} });
+  assert.notEqual(reset.isError, true);
+  assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "idle");
+});
+
 // Reproduce hosts that retain only explicitly declared schema properties.
 function declaredProperties(value: unknown, schema: any): any {
   if (schema?.anyOf) {
@@ -266,7 +425,9 @@ test("declared status schemas survive host filtering and two stdio servers with 
   assert.equal(expected.phaseStartedAt, expected.startedAt);
   assert.deepEqual(declaredProperties(result.structuredContent, update.outputSchema), expected);
   const polled = await widget.callTool({ name: "get-status", arguments: {} });
-  assert.deepEqual(declaredProperties(polled.structuredContent, get.outputSchema), expected);
+  // get-status augments the response with the server build string (not persisted).
+  assert.equal((polled.structuredContent as any)?.serverBuild, "dev");
+  assert.deepEqual(declaredProperties(polled.structuredContent, get.outputSchema), { ...expected, serverBuild: "dev" });
   assert.deepEqual(JSON.parse(await readFile(path.join(home, ".ui5-modernization-dashboard", "state.json"), "utf8")), expected);
   const gate = { ...phase, gateStatus: "passed", gateTestsPassed: 12, gateTestsTotal: 12, findingsAfter: 0 };
   await agent.callTool({ name: "update-status", arguments: { phases: [gate], findingsRemaining: 0 } });
