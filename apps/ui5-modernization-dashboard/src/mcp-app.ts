@@ -705,29 +705,16 @@ function renderCompleted(state: ModernizationState) {
   renderMergeStatus(state);
 
   // Reset: only offered when the run recorded a dedicated modernization branch.
-  const resetEl = document.getElementById("completed-reset")!;
-  if (state.workBranch && state.originalBranch) {
-    const merged = state.mergeStatus === "merged";
-    const resetLabel = merged ? "Clear dashboard" : "Reset app to original state";
-    const resetNote = merged
-      ? `Merged into <code>${escapeHtml(state.originalBranch)}</code>. Clear the dashboard to start fresh.`
-      : `Modernization ran on <code>${escapeHtml(state.workBranch)}</code>. `
-        + `Reset switches <code>${escapeHtml(state.projectPath?.split("/").pop() ?? "the project")}</code> `
-        + `back to <code>${escapeHtml(state.originalBranch)}</code>; your work stays on the branch as a backup.`;
-    resetEl.innerHTML = `
-      <div class="reset-note">${resetNote}</div>
-      <ui5-button id="btn-reset-app" icon="history" design="Transparent">${resetLabel}</ui5-button>`;
-    const btn = document.getElementById("btn-reset-app");
-    btn?.addEventListener("click", () => resetApp(state));
-  } else {
-    resetEl.innerHTML = "";
-  }
+  // renderResetButton handles the branch-present guard and inline confirmation.
+  renderResetButton(state);
 }
 
 // Render the merge section on the completed screen.
 // Three cases: clean (auto-merge ready), deferred (prompt user), gate failed (blocked).
-function renderMergeStatus(state: ModernizationState, justMerged = false) {
+function renderMergeStatus(state: ModernizationState, justMerged = false, force = false) {
   const mergeEl = document.getElementById("completed-merge")!;
+  // Don't clobber an open inline-confirm row with a background poll re-render.
+  if (!force && !justMerged && mergeEl.querySelector(".confirm-row")) return;
   if (!state.workBranch || !state.originalBranch || state.status === "stopped") {
     mergeEl.innerHTML = "";
     return;
@@ -769,7 +756,23 @@ function renderMergeStatus(state: ModernizationState, justMerged = false) {
   mergeEl.innerHTML = `
     ${note}
     <ui5-button id="btn-merge-app" icon="combine" design="${btnDesign}">Merge into ${escapeHtml(state.originalBranch)}</ui5-button>`;
-  document.getElementById("btn-merge-app")?.addEventListener("click", () => mergeApp(state));
+  document.getElementById("btn-merge-app")?.addEventListener("click", () => {
+    // Only the deferred-issues case needs a confirmation (it merges unresolved work);
+    // a clean merge runs straight away, matching the previous no-prompt behavior.
+    if (hasDeferred) {
+      confirmInline({
+        container: mergeEl,
+        question: `${state.deferredIssues!.length} ungelöste Issue${state.deferredIssues!.length !== 1 ? "s" : ""} — `
+          + `trotzdem nach <code>${escapeHtml(state.originalBranch!)}</code> mergen?`,
+        confirmLabel: `Trotzdem mergen`,
+        confirmDesign: "Emphasized",
+        onConfirm: () => mergeApp(state),
+        rewire: () => renderMergeStatus(state, false, true),
+      });
+    } else {
+      mergeApp(state);
+    }
+  });
 }
 
 // Merge the modernization work branch into the original branch.
@@ -788,6 +791,66 @@ function setActionStatus(kind: "working" | "ok" | "error", text: string) {
   el.className = `completed-action-status status-${kind}`;
   const icon = kind === "working" ? "" : kind === "ok" ? "✓ " : "⚠ ";
   el.textContent = `${icon}${text}`;
+}
+
+// Inline confirmation for destructive actions. window.confirm/alert are blocked
+// inside the sandboxed Desktop MCP-app iframe (they return false with no dialog),
+// which is why the reset/merge buttons appeared dead there. Instead we swap the
+// action button for a "<question> [confirm] [Abbrechen]" row inside its own
+// container. Confirm runs onConfirm (which takes over feedback via the action
+// status line); Abbrechen restores the original button by calling rewire().
+function confirmInline(opts: {
+  container: HTMLElement;
+  question: string;        // may contain <code>…</code> for branch names
+  confirmLabel: string;
+  confirmDesign?: string;  // ui5-button design, e.g. "Negative" | "Emphasized"
+  onConfirm: () => void;
+  rewire: () => void;      // re-renders the original button + its click handler
+}): void {
+  const { container, question, confirmLabel, confirmDesign = "Negative", onConfirm, rewire } = opts;
+  container.innerHTML = `
+    <div class="confirm-row">
+      <span class="confirm-q">${question}</span>
+      <div class="confirm-actions">
+        <ui5-button id="confirm-yes" design="${confirmDesign}">${escapeHtml(confirmLabel)}</ui5-button>
+        <ui5-button id="confirm-cancel" design="Transparent">Abbrechen</ui5-button>
+      </div>
+    </div>`;
+  document.getElementById("confirm-yes")?.addEventListener("click", () => onConfirm());
+  document.getElementById("confirm-cancel")?.addEventListener("click", () => rewire());
+}
+
+// Render the reset button + its click handler into #completed-reset. Shared by the
+// initial completed render, the post-merge re-render, and the inline-confirm cancel
+// path so all three produce an identical, correctly-wired button.
+function renderResetButton(state: ModernizationState, force = false) {
+  const resetEl = document.getElementById("completed-reset");
+  if (!resetEl) return;
+  // Don't clobber an open inline-confirm row with a background poll re-render —
+  // only an explicit rewire (force) or the branch-absent case may replace it.
+  if (!force && resetEl.querySelector(".confirm-row")) return;
+  if (!(state.workBranch && state.originalBranch)) { resetEl.innerHTML = ""; return; }
+  const merged = state.mergeStatus === "merged";
+  const resetLabel = merged ? "Clear dashboard" : "Reset app to original state";
+  const resetNote = merged
+    ? `Merged into <code>${escapeHtml(state.originalBranch)}</code>. Clear the dashboard to start fresh.`
+    : `Modernization ran on <code>${escapeHtml(state.workBranch)}</code>. `
+      + `Reset switches <code>${escapeHtml(state.projectPath?.split("/").pop() ?? "the project")}</code> `
+      + `back to <code>${escapeHtml(state.originalBranch)}</code>; your work stays on the branch as a backup.`;
+  resetEl.innerHTML = `
+    <div class="reset-note">${resetNote}</div>
+    <ui5-button id="btn-reset-app" icon="history" design="Transparent">${resetLabel}</ui5-button>`;
+  document.getElementById("btn-reset-app")?.addEventListener("click", () => {
+    confirmInline({
+      container: resetEl,
+      question: `App auf den alten Stand zurücksetzen? Das Repository wechselt zurück auf `
+        + `<code>${escapeHtml(state.originalBranch!)}</code>; deine Arbeit bleibt als Backup auf `
+        + `<code>${escapeHtml(state.workBranch!)}</code>.`,
+      confirmLabel: resetLabel,
+      onConfirm: () => resetApp(state),
+      rewire: () => renderResetButton(state, true),
+    });
+  });
 }
 
 interface ActionOutcome { failed: boolean; message: string; }
@@ -824,24 +887,17 @@ async function callAction(restPath: string, toolName: string): Promise<ActionOut
 }
 
 async function mergeApp(state: ModernizationState) {
-  const hasDeferred = (state.deferredIssues?.length ?? 0) > 0;
-  if (hasDeferred) {
-    const ok = window.confirm(
-      `There are ${state.deferredIssues!.length} deferred issue(s) that were not resolved.\n\n`
-      + `Merge anyway into "${state.originalBranch}"?`,
-    );
-    if (!ok) return;
-  }
-
   const btn = document.getElementById("btn-merge-app") as any;
   if (btn) { btn.disabled = true; }
   setActionStatus("working", `Merging into ${state.originalBranch}…`);
 
   const { failed, message } = await callAction("/api/merge-app", "merge-app");
   if (failed) {
+    // Inline status is the only feedback channel — window.alert is blocked in the
+    // sandboxed Desktop iframe. Re-render the merge section (force, since the confirm
+    // path replaced the button with the confirm row) so the user can retry.
     setActionStatus("error", message || "Merge not performed.");
-    window.alert(`Merge not performed.\n\n${message}`);
-    if (btn) { btn.disabled = false; }
+    renderMergeStatus(state, false, true);
     return;
   }
 
@@ -849,33 +905,25 @@ async function mergeApp(state: ModernizationState) {
   // Success: update the merge section in-place (don't switch to idle).
   state.mergeStatus = "merged";
   renderMergeStatus(state, true);
-  // Update reset button text to reflect post-merge state.
-  const resetEl = document.getElementById("completed-reset")!;
-  resetEl.innerHTML = `
-    <div class="reset-note">Merged into <code>${escapeHtml(state.originalBranch!)}</code>. Clear the dashboard to start fresh.</div>
-    <ui5-button id="btn-reset-app" icon="history" design="Transparent">Clear dashboard</ui5-button>`;
-  document.getElementById("btn-reset-app")?.addEventListener("click", () => resetApp(state));
+  // Re-render the reset button to reflect post-merge state ("Clear dashboard").
+  renderResetButton(state);
 }
 
 // Switch the repository back to the original branch, undoing the whole run.
-// Work branch is kept as a backup.
+// Work branch is kept as a backup. Confirmation is handled inline by the button
+// handler (renderResetButton) before this runs — window.confirm is blocked in the
+// sandboxed Desktop iframe.
 async function resetApp(state: ModernizationState) {
-  const ok = window.confirm(
-    `Reset the app to its original state?\n\n`
-    + `The repository will switch back to "${state.originalBranch}".\n`
-    + `Your modernization work stays on "${state.workBranch}" as a backup.`,
-  );
-  if (!ok) return;
-
   const btn = document.getElementById("btn-reset-app") as any;
   if (btn) { btn.disabled = true; }
   setActionStatus("working", `Switching back to ${state.originalBranch}…`);
 
   const { failed, message } = await callAction("/api/reset-app", "reset-app");
   if (failed) {
+    // Inline status is the only feedback channel — window.alert is blocked in the
+    // sandboxed Desktop iframe. Re-render the button so the user can retry.
     setActionStatus("error", message || "Reset not performed.");
-    window.alert(`Reset not performed.\n\n${message}`);
-    if (btn) { btn.disabled = false; }
+    renderResetButton(state);
     return;
   }
 

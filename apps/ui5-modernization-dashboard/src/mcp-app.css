@@ -373,6 +373,11 @@ body {
 .merge-note-clean, .merge-note-clean ui5-icon, .merge-note-success, .merge-note-success ui5-icon { color: var(--sapPositiveColor, #3fb950); }
 .merge-note-warn, .merge-note-warn ui5-icon { color: var(--sapCriticalElementColor, #f7bf00); }
 .merge-note-blocked, .merge-note-blocked ui5-icon { color: var(--sapNegativeColor, #f85149); }
+/* Inline confirmation row (replaces window.confirm, which is blocked in the Desktop iframe). */
+.confirm-row { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+.confirm-q { font-size: 0.8125rem; color: var(--sapNeutralColor, #6a6d70); }
+.confirm-q code { font-family: var(--sapCode_FontFamily, monospace); }
+.confirm-actions { display: flex; gap: 0.5rem; }
 .link-card ui5-card { overflow: hidden; }
 .link-card-row {
   display: flex;
