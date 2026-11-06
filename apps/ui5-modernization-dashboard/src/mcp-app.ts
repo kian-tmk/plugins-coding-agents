@@ -879,9 +879,27 @@ async function resetApp(state: ModernizationState) {
     return;
   }
 
-  // Success: server set state to idle — reflect it immediately.
+  // Success: server set state to idle. Repurpose the idle screen as a reset
+  // confirmation so the user gets a lasting "it worked, here's your backup"
+  // message instead of a blank screen (the completed-screen status line is
+  // hidden the moment we switch away).
   setActionStatus("ok", message || "Reset complete.");
+  setIdleMessage(
+    "App ist wieder auf dem alten Stand",
+    `Zurückgesetzt auf „${state.originalBranch}“. Deine Modernisierung liegt als Backup auf dem Branch „${state.workBranch}“.`,
+  );
   showScreen("idle");
+}
+
+// Override the idle screen's title + subtitle (used after a reset to confirm the
+// outcome). Plain textContent/attribute writes — the next idle poll leaves them.
+function setIdleMessage(title: string, subtitle: string) {
+  const titleEl = document.getElementById("idle-title-text");
+  if (titleEl) titleEl.textContent = title;
+  const illus = document.getElementById("idle-illustration");
+  if (illus) illus.setAttribute("subtitle-text", subtitle);
+  const hint = document.getElementById("idle-hint");
+  if (hint) hint.style.display = "none";
 }
 
 // ── State handling ────────────────────────────────────────────────────────────
@@ -1181,7 +1199,13 @@ app.connect().then(async () => {
   // Check if a run is already active on load
   let desktopInitDone = false;
   try {
-    const result = await app.callServerTool({ name: "get-status", arguments: {} });
+    // Bounded: if the bridge accepts the connection but never answers the first
+    // call (observed on Desktop), do NOT await forever — fall through to REST and
+    // still start polling, which re-tries (and reconnects) on its own cadence.
+    const result = await app.callServerTool(
+      { name: "get-status", arguments: {} },
+      { signal: AbortSignal.timeout(5000) },
+    );
     const state = result.structuredContent as ModernizationState | undefined;
     if (state?.status === "running") {
       showScreen("dashboard");
@@ -1193,9 +1217,13 @@ app.connect().then(async () => {
       renderCompleted(state);
       startPolling();
       desktopInitDone = true;
+    } else if (state) {
+      // Reached the server (idle/unknown) — still begin polling so later pushes show.
+      startPolling();
+      desktopInitDone = true;
     }
   } catch {
-    // get-status via MCP failed — fall back to REST
+    // get-status via MCP hung or failed — fall back to REST, and ensure polling runs.
   }
 
   if (!desktopInitDone) {
