@@ -1,6 +1,6 @@
 # UI5 Modernization Dashboard — Architektur & Stand
 
-> Stand: 2026-11-04. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
+> Stand: 2026-11-10. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
 > zusammenspielen, welche Daten fließen und was die App heute kann.
 >
 > **Pflege-Konvention:** Bei jeder nennenswerten Änderung am Dashboard (Datenfluss,
@@ -105,6 +105,7 @@ Wichtigste Felder (TypeScript-Schema: `ModernizationState` in `src/mcp-app.ts`):
 | `currentPhase`, `currentActivity`, `overallProgress` | aktueller Fortschritt |
 | `startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`, `stopReason`, `elapsedSeconds` | Zeitanker für die Timer + Stop-Info |
 | `mergedAt`, `mergeStatus` | Merge-Status (`"pending"` \| `"merged"` \| `"skipped"` \| `null`); `mergedAt` server-verwaltet |
+| `lastOutcome` | server-geschriebene, persistente Bestätigung der letzten Reset/Clear-Aktion (`kind:"reset"\|"merged-cleared"`, Branch-Namen, `at`). Der Idle-Screen liest sie aus dem State, damit die „zurückgesetzt"-Meldung Reload/zweiten Tab überlebt. Ein neuer Lauf verwirft sie |
 | `phases[]` | die 6 Phasen (siehe unten) |
 | `deferredIssues[]` | zurückgestellte Findings (Completed-Screen) |
 | `reportPath`, `issuesPath` | absolute Pfade zu MODERNIZATION-REPORT.md / -ISSUES.md |
@@ -121,10 +122,13 @@ sowie die Gate-Felder `gateDurationSeconds`, `gateTestsPassed`, `gateTestsTotal`
 
 ### 2. Der Server (`main.ts` + `server.ts`)
 
-Ein Node-Prozess, der in **zwei Modi** laufen kann — beide bedienen denselben State:
+Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen denselben State. **In beiden Fällen ist der tragende Statuskanal das MCP-Tool `update-status`** (der Workflow pusht darüber, nie über HTTP). Welcher Modus läuft, entscheidet nur das `--stdio`-Startflag:
 
-- **HTTP-Modus** (Default, `node dist-server/main.js`): Express auf Port **3001** (überschreibbar via `PORT`-Env). Dient dem **Browser** und bietet **zusätzlich** das MCP-Protokoll über HTTP (`/mcp`). Macht das **Git-Polling** (alle 5 s, nur in diesem Modus): liest Commits seit `startedAt` und aktuell geänderte/neue Dateien aus `projectPath` und schreibt sie als `gitActivity` zurück in den State.
-- **stdio-Modus** (`node dist-server/main.js --stdio`): für **Claude Desktop** als MCP-Server. Kein HTTP, kein Git-Polling — die Git-Aktivität fehlt daher im Desktop-Widget, es sei denn, der Workflow sie explizit in den State pusht.
+- **stdio-Modus** (`node dist-server/main.js --stdio`): MCP-Server über stdio, für **Claude Desktop**. Der Host spricht den Server direkt über die MCP-Verbindung an — kein HTTP, kein Port (die Desktop-Sandbox blockiert Port-Binding ohnehin). Kein Git-Polling, daher fehlt die Git-Aktivität im Desktop-Widget, es sei denn, der Workflow pusht sie explizit in den State.
+- **HTTP-Modus** (`node dist-server/main.js`, der Zweig ohne `--stdio`): Express auf Port **3001** (überschreibbar via `PORT`-Env). Dieser Modus existiert **allein, um im CLI-Fall die Dashboard-Seite im Browser auszuliefern** — er ist nicht der „Haupt"- oder bevorzugte Weg, sondern die Browser-Variante. Er bietet das MCP-Protokoll zusätzlich über HTTP (`/mcp`) an und macht als Einziger das **Git-Polling** (alle 5 s): liest Commits seit `startedAt` und aktuell geänderte/neue Dateien aus `projectPath` und schreibt sie als `gitActivity` zurück in den State.
+
+> Statusfluss und Transport sind getrennt: Der Status der Modernisierung geht in CLI **und** Desktop über `update-status` (MCP). HTTP liefert im CLI nur die Browser-Oberfläche — der Browser *liest* dann per `/api/status`, aber geschrieben wird nie über HTTP.
+
 
 **HTTP-Endpunkte** (nur HTTP-Modus):
 - `GET /` → liefert `dist/mcp-app.html`
@@ -142,17 +146,17 @@ Ein Node-Prozess, der in **zwei Modi** laufen kann — beide bedienen denselben 
 - `update-status` — Partial-State mergen (der Workflow pusht hierüber); Server verwaltet Zeitstempel (`startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`)
 - `reset-status` — State auf idle
 - `stop-status` — Run als gestoppt markieren (`status:"stopped"`), dabei Fortschrittsdaten erhalten (Phasen, Findings, deferred Issues). Für User-Abbruch, nicht für `reset`
-- `reset-app` — Gesamten Modernisierungslauf rückgängig machen: verwirft uncommitted Changes auf dem Work-Branch (`git checkout . && git clean -fd`), wechselt zurück auf den Original-Branch, setzt Dashboard auf idle. Optional: Work-Branch löschen (`removeWorkBranch: true`). Nach einem Merge: erkennt `mergeStatus:"merged"` und setzt nur Dashboard auf idle (kein Branch-Switch nötig)
-- `merge-app` — Work-Branch via `git merge --no-ff` in Original-Branch mergen. Nur verfügbar wenn Run completed und alle Gates passed. Erstellt Merge-Commit mit Zusammenfassung (Findings, Phasen). Setzt `mergeStatus:"merged"` und `mergedAt`. Verweigert bei fehlgeschlagenen Gates oder wenn bereits gemergt
+- `reset-app` — Gesamten Modernisierungslauf rückgängig machen: verwirft uncommitted Changes auf dem Work-Branch (`git checkout . && git clean -fd`), wechselt zurück auf den Original-Branch, setzt Dashboard auf idle und schreibt ein persistentes `lastOutcome`. Optional: Work-Branch löschen (`removeWorkBranch: true`). Nach einem Merge: erkennt `mergeStatus:"merged"` und setzt nur Dashboard auf idle (kein Branch-Switch nötig). **Worktree-aware:** ist `projectPath` ein Git-Worktree (Desktop „Use worktree"), wird der Worktree entfernt (`git worktree remove`) statt eines Branch-Switches — der Original-Branch lebt bereits im Root-Checkout
+- `merge-app` — Work-Branch via `git merge --no-ff` in Original-Branch mergen. Nur verfügbar wenn Run completed und alle Gates passed. Erstellt Merge-Commit mit Zusammenfassung (Findings, Phasen). Setzt `mergeStatus:"merged"` und `mergedAt`. Verweigert bei fehlgeschlagenen Gates oder wenn bereits gemergt. **Worktree-aware:** bei einem Worktree läuft der Merge direkt im Root-Repo (das schon auf dem Original-Branch steht), mit `git merge --abort` als Rollback
 - `get-file` — eine .md-Datei per absolutem Pfad lesen (für die Markdown-Anzeige im Desktop)
-- `setup-desktop-dashboard` — (nur macOS, nur stdio-Modus, gated durch `enableDesktopSetup`-Flag) MCP-Server-Registrierung in Claude Desktop Config vorbereiten; launchd-Helper wartet auf User-Quit
+- `setup-desktop-dashboard` — (nur macOS, nur stdio-Modus, gated durch `enableDesktopSetup`-Flag) MCP-Server-Registrierung in Claude Desktop Config vorbereiten; launchd-Helper wartet auf User-Quit. Optionale `projectPath` + `resumeContext` bereiten einen Fortsetzungs-Chat vor (Deep-Link `claude://code/new`), der den Workflow nach dem Neustart fortsetzt. Rückgabe-Status steuert den Skill: `configured` (schon registriert → **kein** Neustart, direkt weiter), `waiting-for-quit` (Registrierung vorbereitet → User muss ⌘Q drücken, Helper öffnet Claude + Fortsetzungs-Chat neu), oder Fehler (→ ohne Dashboard fortfahren)
 - Resource `ui://ui5-modernization/mcp-app.html` — die UI selbst
 
 ### 3. Die UI (`src/mcp-app.ts` + `mcp-app.html` + `mcp-app.css`)
 
 Eine Single-Page-App mit drei HTML-Screens, umgeschaltet nach `state.status`:
 
-- **Idle** — Warte-Anzeige mit `ui5-illustrated-message`, verbindet sich automatisch wenn ein Lauf startet.
+- **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. 🚧 **In Arbeit:** `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Linter-läuft/Phase 0 (`neutral`, busy) und sonst „Bereit". Pausiert-Darstellung ist vorbereitet (kein Server-Status). Visuelle Desktop-Widget-Verifikation steht noch aus.
 - **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität, Git-Commits.
 - **Completed / Stopped** — Zusammenfassung: Phasen-Tabelle mit Gate-Ergebnissen, Statistiken, Links zu Report/Issues (Markdown-Viewer), Reset-Button. Bei `stopped`: Stop-Grund statt Erfolgs-Header, Remaining-Findings hervorgehoben. Beide Status nutzen denselben HTML-Screen (`screen-completed`).
 
@@ -218,7 +222,7 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 ### Modernisierung starten (Claude Code Desktop)
 
 1. Skill prüft ob Dashboard-Server in `claude_desktop_config.json` registriert ist.
-2. Falls nein: `setup-desktop-dashboard`-Tool aufrufen → kopiert Runtime nach `~/Library/Application Support/UI5 Modernization Dashboard/<profile>/runtime/`, registriert MCP-Server in Config, launchd-Helper wartet auf User-Quit und öffnet Claude neu.
+2. Falls nein: `setup-desktop-dashboard`-Tool aufrufen → kopiert Runtime nach `~/Library/Application Support/UI5 Modernization Dashboard/<profile>/runtime/`, registriert MCP-Server in Config, launchd-Helper wartet auf User-Quit und öffnet Claude neu (mit vorbereitetem Fortsetzungs-Chat, wenn `projectPath`/`resumeContext` übergeben wurden). Gibt das Tool `configured` zurück, ist der Server schon registriert → **kein** Neustart, direkt weiter.
 3. **Wichtig:** Server muss in `claude_desktop_config.json` stehen (nicht nur in Plugin-`.mcp.json`), sonst rendert der Host kein Widget. Plugin-`.mcp.json` darf den Dashboard-Server **nicht** zusätzlich registrieren (Duplicate = Widget bricht).
 4. `open-dashboard` öffnet das Widget. Status-Updates laufen über `update-status` (MCP-Tool, kein HTTP).
 
@@ -231,9 +235,10 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 ### User will Reset nach Abschluss
 
 1. `reset-app`-Tool aufrufen (oder Reset-Button im Dashboard).
-2. Tool liest `originalBranch`/`workBranch`/`projectPath` aus State, räumt Working Tree auf, wechselt Branch.
+2. Tool liest `originalBranch`/`workBranch`/`projectPath` aus State, räumt Working Tree auf, wechselt Branch (oder entfernt den Worktree, falls `projectPath` ein Git-Worktree ist).
 3. Optional: `removeWorkBranch: true` löscht den Work-Branch.
 4. **Nie manuell** per `git checkout`/`git branch -D` — das lässt modifizierte Dateien auf dem Ziel-Branch liegen.
+5. Erfolg schreibt `lastOutcome` in den State → der Idle-Screen zeigt eine reload-feste Bestätigung.
 
 ### Auto-Merge nach Abschluss
 
@@ -247,8 +252,8 @@ Drei Fälle nach `status:"completed"`:
 
 ```bash
 npm run build     # vite (UI → dist/) + tsc (Server → dist-server/)
-node dist-server/main.js            # HTTP-Server auf :3001 (Browser)
-node dist-server/main.js --stdio    # stdio-Server (Claude Desktop)
+node dist-server/main.js            # HTTP-Server auf :3001 — nur für die Browser-Anzeige (CLI)
+node dist-server/main.js --stdio    # stdio-/MCP-Server (Claude Desktop)
 npm run dev       # watch-Build + tsx-Server (Entwicklung)
 npm run bundle    # vite UI + esbuild: Server zu EINER dist-server/main.js (Deps inline, kein node_modules)
 npm run deliver   # bundle + Artefakte nach plugins/ui5-modernization/dashboard/ kopieren (nach jeder Änderung ausführen)
@@ -279,15 +284,17 @@ plugins/ui5-modernization/
     └── modernize-ui5-app/SKILL.md
 ```
 
-**Wichtig:** Die Plugin-`.mcp.json` registriert **nur** `chrome-devtools`, **nicht** den Dashboard-Server. Der Dashboard-Server wird in der CLI über den Skill gestartet (HTTP-Modus) und im Desktop über `claude_desktop_config.json` (stdio-Modus).
+**Wichtig:** Die Plugin-`.mcp.json` registriert **nur** `chrome-devtools`, **nicht** den Dashboard-Server. Der Dashboard-Server läuft in der CLI als HTTP-Prozess (vom Skill gestartet, für die Browser-Anzeige) und im Desktop als stdio-Instanz (registriert in `claude_desktop_config.json`). In beiden Fällen pusht der Workflow den Status über das `update-status`-MCP-Tool, nicht über HTTP.
 
 ### Server-Instanz im Desktop
 
-Im Desktop gibt es **eine** Instanz des Dashboard-Servers: die **App-Config-Instanz**, registriert in `claude_desktop_config.json` durch `setup-desktop-dashboard`. Nur diese Instanz kann Widgets rendern.
+Im Desktop gibt es **eine** Instanz des Dashboard-Servers: die **App-Config-Instanz** namens `ui5-modernization-dashboard` (stdio, `…/runtime/dist-server/main.js --stdio`), registriert in `claude_desktop_config.json` durch `setup-desktop-dashboard`. Nur diese Instanz kann Widgets rendern. (Der Host startet sie als Prozess-Paar — Node-Prozess + `disclaimer`-Wrapper —, das ist **eine** logische Instanz, nicht zwei.)
 
-Das Plugin (`.mcp.json`) registriert **nur** `chrome-devtools`, **nicht** den Dashboard-Server. Die Dashboard-MCP-Tools (`open-dashboard`, `update-status` etc.) werden ausschließlich von der App-Config-Instanz bereitgestellt.
+Das Plugin (`.mcp.json`) registriert **nur** `chrome-devtools`, **nicht** den Dashboard-Server; auch `plugin.json` lädt keinen MCP-Server (nur `skills`). Die Dashboard-MCP-Tools (`open-dashboard`, `update-status` etc.) werden ausschließlich von der App-Config-Instanz bereitgestellt.
 
 **Achtung:** Wenn `.mcp.json` den Dashboard-Server **zusätzlich** registrieren würde, entstünden zwei Server-PIDs, und das Widget-Rendering bricht stumm. Deshalb steht der Dashboard-Server **nie** in `.mcp.json`.
+
+> **Verwaiste Alt-Einträge:** In einer über längere Zeit gewachsenen `claude_desktop_config.json` kann zusätzlich ein veralteter HTTP-Eintrag auftauchen (z.B. `ui5-modernization` mit `url: http://localhost:3001/mcp`) — ein Relikt aus der abgeschafften curl-an-`:3001/mcp`-Ära (siehe Changelog 2026-10-29). Er wird von keinem aktuellen Setup-Code geschrieben und gehört nicht zur Soll-Architektur. Maßgeblich ist allein der stdio-Eintrag `ui5-modernization-dashboard`; ein solcher HTTP-Alt-Eintrag kann entfernt werden.
 
 ### Desktop-Setup
 
