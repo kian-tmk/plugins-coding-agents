@@ -53,6 +53,12 @@ import "@ui5/webcomponents/dist/Bar.js";
 import "@ui5/webcomponents/dist/ProgressIndicator.js";
 import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Tools.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Settings.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/NoTasks.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/BeforeSearch.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/ReloadScreen.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/KeyTask.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/NoData.js";
 import "@ui5/webcomponents-icons/dist/sys-enter-2.js";
 import "@ui5/webcomponents-icons/dist/process.js";
 import "@ui5/webcomponents-icons/dist/accept.js";
@@ -67,6 +73,7 @@ import "@ui5/webcomponents-icons/dist/source-code.js";
 import "@ui5/webcomponents-icons/dist/developer-settings.js";
 import "@ui5/webcomponents-icons/dist/download.js";
 import "@ui5/webcomponents-icons/dist/combine.js";
+import "@ui5/webcomponents-icons/dist/detail-view.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
 // Must come AFTER all registerThemePropertiesLoader calls so the theme can resolve.
@@ -974,15 +981,11 @@ interface IdleMessageOpts {
   subtitle: string;
   variant?: IdleVariant;
   hint?: boolean;
+  illustration?: string;   // ui5-illustrated-message name, e.g. "NoTasks", "tnt/Settings"
+  headerIcon?: string;     // ui5-icon name shown left of the title
+  iconBlue?: boolean;      // force the header icon blue regardless of variant colour
   action?: { label: string; icon?: string; onClick: () => void };
 }
-
-const IDLE_VARIANT_ICON: Record<IdleVariant, string | null> = {
-  neutral: null,
-  success: "sys-enter-2",
-  error: "error",
-  warning: "alert",
-};
 
 function setIdleMessage(opts: IdleMessageOpts): void;
 function setIdleMessage(title: string, subtitle: string): void; // back-compat overload
@@ -995,7 +998,10 @@ function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
   const titleEl = document.getElementById("idle-title-text");
   if (titleEl) titleEl.textContent = opts.title;
   const illus = document.getElementById("idle-illustration");
-  if (illus) illus.setAttribute("subtitle-text", opts.subtitle);
+  if (illus) {
+    illus.setAttribute("subtitle-text", opts.subtitle);
+    if (opts.illustration) illus.setAttribute("name", opts.illustration);
+  }
 
   // Variant class drives the accent colour (idle-<variant> on .idle-wrap).
   const wrap = document.getElementById("idle-wrap");
@@ -1004,12 +1010,12 @@ function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
     wrap.classList.add(`idle-${variant}`);
   }
 
-  // Accent icon: hidden for neutral, otherwise the per-variant glyph.
-  const vIcon = document.getElementById("idle-variant-icon") as any;
-  if (vIcon) {
-    const name = IDLE_VARIANT_ICON[variant];
-    if (name) { vIcon.setAttribute("name", name); vIcon.classList.remove("hidden"); }
-    else vIcon.classList.add("hidden");
+  // Header icon left of the title — per-state glyph, coloured by the variant (or
+  // forced blue when the spec pins a neutral-blue icon on a coloured screen).
+  const hIcon = document.getElementById("idle-header-icon") as any;
+  if (hIcon && opts.headerIcon) {
+    hIcon.setAttribute("name", opts.headerIcon);
+    hIcon.classList.toggle("icon-blue", !!opts.iconBlue);
   }
 
   // Hint line: shown by default only for neutral, unless explicitly overridden.
@@ -1034,14 +1040,17 @@ function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
   }
 }
 
-// Reset the idle screen to its plain "ready" state (neutral, hint visible, no
-// action). Called when a genuinely fresh idle state arrives with no outcome to show.
+// Reset the idle screen to the plain "no modernization running" state (state 0:
+// idle, no run active). Illustration NoTasks, blue detail-view icon, no button.
 function resetIdleToReady(): void {
   setIdleMessage({
-    title: "UI5 Modernization",
-    subtitle: "Bereit für die Modernisierung",
+    title: "Keine laufende Modernisierung",
+    subtitle: "Aktuell läuft keine Modernisierung. Starte sie über einen Coding Agent mit /modernize-ui5-app.",
     variant: "neutral",
-    hint: true,
+    illustration: "NoTasks",
+    headerIcon: "detail-view",
+    iconBlue: true,
+    hint: false,
   });
 }
 
@@ -1062,16 +1071,25 @@ function setIdleOutcome(opts: IdleMessageOpts): void {
 // not from a client-only flag.
 function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>): IdleMessageOpts {
   if (outcome.kind === "merged-cleared") {
+    // State 5 — Merge success. Illustration KeyTask, combine icon (blue).
     return {
       title: "Erfolgreich gemerged und aufgeräumt",
       subtitle: `„${outcome.workBranch}“ wurde nach „${outcome.originalBranch}“ gemerged. Das Dashboard ist zurückgesetzt.`,
       variant: "success",
+      illustration: "KeyTask",
+      headerIcon: "combine",
+      iconBlue: true,
+      hint: false,
     };
   }
+  // State 4 — Reset success. Illustration ReloadScreen, sys-enter-2 icon (green).
   return {
     title: "App ist wieder auf dem alten Stand",
     subtitle: `Zurückgesetzt auf „${outcome.originalBranch}“. Deine Modernisierung liegt als Backup auf dem Branch „${outcome.workBranch}“.`,
     variant: "success",
+    illustration: "ReloadScreen",
+    headerIcon: "sys-enter-2",
+    hint: false,
   };
 }
 
@@ -1080,32 +1098,49 @@ function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>)
 function renderIdle(state: ModernizationState | null): void {
   showScreen("idle");
 
-  // 1. A client-only error outcome (server unreachable) wins — it is set only while
-  //    the server can't be reached, so there is no state.lastOutcome to rely on.
+  // State 7 — a general (non-connection) error reported in the state. Wired for a
+  // future `status:"error"` / `state.error`; there is no server-side error status
+  // yet, so this branch simply works once one lands. Distinct from state 6 below,
+  // which is the client-only "can't reach the server" case.
+  if (state && ((state.status as string) === "error" || (state as any).error)) {
+    setIdleMessage({
+      title: "Es ist ein Fehler aufgetreten",
+      subtitle: "Läuft der Coding Agent noch korrekt? Wenn ja, starte das Dashboard neu.",
+      variant: "error",
+      illustration: "NoData",
+      headerIcon: "error",
+      hint: false,
+    });
+    return;
+  }
+
+  // State 6 — a client-only error outcome (server unreachable) set only while there
+  // is no reachable server state.
   if (pendingIdleOutcome?.variant === "error") { setIdleMessage(pendingIdleOutcome); return; }
 
-  // 2. Server-persisted reset/clear confirmation — reload- and tab-safe. Preferred
-  //    over the transient flag so a refresh still shows "it worked".
+  // Server-persisted reset/clear confirmation (states 4/5) — reload- and tab-safe.
   if (state?.lastOutcome) { setIdleMessage(outcomeMessage(state.lastOutcome)); return; }
 
-  // 3. Transient success outcome set this session (immediate feedback before the
-  //    server state round-trips). Harmless to keep as a fallback.
+  // Transient success outcome set this session (immediate feedback before the
+  // server state round-trips).
   if (pendingIdleOutcome) { setIdleMessage(pendingIdleOutcome); return; }
 
-  // 4. Paused — status does not exist server-side yet; this branch is wired so the
-  //    display simply works once a future `status:"paused"` (or state.paused) lands.
+  // Paused — status does not exist server-side yet; wired so it works once a future
+  // `status:"paused"` (or state.paused) lands.
   const paused = state && ((state.status as string) === "paused" || (state as any).paused === true);
   if (paused) {
     setIdleMessage({
       title: "Pausiert",
       subtitle: "Der Modernisierungslauf ist pausiert.",
       variant: "warning",
+      illustration: "BeforeSearch",
+      headerIcon: "alert",
       hint: false,
     });
     return;
   }
 
-  // 3. Stale run (>24h) — surface the interrupted run + offer a reset.
+  // State 3 — Stale run (>24h): surface the interrupted run + offer a reset.
   const isStale = !!(state && state.status === "running" && state.startedAt
     && (Date.now() - new Date(state.startedAt).getTime()) > 24 * 60 * 60 * 1000);
   if (isStale && state) {
@@ -1114,9 +1149,11 @@ function renderIdle(state: ModernizationState | null): void {
     setIdleMessage({
       title: `Lauf vom ${started} unterbrochen`,
       subtitle: canReset
-        ? `Der Lauf hängt auf „${state.workBranch}". Setze auf „${state.originalBranch}" zurück, um aufzuräumen.`
+        ? `Der Lauf hängt auf „${state.workBranch}“. Setze auf „${state.originalBranch}“ zurück, um aufzuräumen — oder starte den Agenten neu, um fortzusetzen.`
         : "Der Lauf scheint unterbrochen. Kein Backup-Branch hinterlegt.",
       variant: "warning",
+      illustration: "BeforeSearch",
+      headerIcon: "alert",
       hint: false,
       action: canReset
         ? { label: `Zurücksetzen auf ${state.originalBranch}`, icon: "history", onClick: () => resetApp(state) }
@@ -1125,21 +1162,38 @@ function renderIdle(state: ModernizationState | null): void {
     return;
   }
 
-  // 4. Linter running (Phase 0) — a running state with no phases yet. The dashboard
-  //    screen can't be filled meaningfully, so keep a neutral busy idle screen.
-  const linterRunning = !!(state && state.status === "running"
-    && (!Array.isArray(state.phases) || state.phases.length === 0));
-  if (linterRunning) {
-    setIdleMessage({
-      title: "UI5 Modernization",
-      subtitle: "Linter-Analyse läuft…",
-      variant: "neutral",
-      hint: true,
-    });
+  // A running state before any phases exist splits into two early screens:
+  if (state && state.status === "running"
+      && (!Array.isArray(state.phases) || state.phases.length === 0)) {
+    const activity = (state.currentActivity ?? "").toLowerCase();
+    const linterRunning = activity.includes("linter") || activity.includes("lint");
+    if (linterRunning) {
+      // State 2 — Linter running.
+      setIdleMessage({
+        title: "Linter-Analyse läuft…",
+        subtitle: "Der UI5 Linter sucht nach allen Deprecations in der App.",
+        variant: "neutral",
+        illustration: "tnt/Settings",
+        headerIcon: "developer-settings",
+        iconBlue: true,
+        hint: false,
+      });
+    } else {
+      // State 1 — Modernization just started (first running tick, before the linter).
+      setIdleMessage({
+        title: "Modernisierung gestartet",
+        subtitle: "Der Agent hat den Modernisierungs-Workflow gestartet. Der Lauf wird hier angezeigt.",
+        variant: "neutral",
+        illustration: "tnt/Settings",
+        headerIcon: "process",
+        iconBlue: true,
+        hint: false,
+      });
+    }
     return;
   }
 
-  // 5. Default — plain ready state.
+  // State 0 — no modernization running (plain idle, no outcome).
   resetIdleToReady();
 }
 
@@ -1402,6 +1456,8 @@ async function poll() {
           title: "Dashboard-Server nicht erreichbar",
           subtitle: "Verbindung zum Status unterbrochen. Es wird erneut versucht…",
           variant: "error",
+          illustration: "NoData",
+          headerIcon: "error",
           hint: false,
         });
       }
@@ -1540,6 +1596,8 @@ app.connect().then(async () => {
       title: "Dashboard-Server nicht erreichbar",
       subtitle: "Der Status konnte nicht geladen werden. Läuft der Dashboard-Server? Es wird erneut versucht…",
       variant: "error",
+      illustration: "NoData",
+      headerIcon: "error",
       hint: false,
     });
     startPolling();
