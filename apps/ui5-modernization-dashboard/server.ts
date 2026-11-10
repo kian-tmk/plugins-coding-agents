@@ -72,6 +72,22 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
   return merged;
 }
 
+// When the modernization runs in a git worktree (Desktop "Use worktree" checkbox),
+// projectPath is a linked worktree rather than the main checkout. Returns the root
+// repo path in that case, or null for a normal checkout (or on any git error).
+async function getWorktreeRoot(projectPath: string): Promise<string | null> {
+  try {
+    const gitDir = (await execFileAsync("git", ["rev-parse", "--git-dir"], { cwd: projectPath, timeout: 10000 })).stdout.trim();
+    // Worktree git-dir looks like .../<root>/.git/worktrees/<name>; a normal repo is ".git".
+    const marker = "/.git/worktrees/";
+    const idx = gitDir.indexOf(marker);
+    if (idx === -1) return null;
+    return gitDir.slice(0, idx);
+  } catch {
+    return null;
+  }
+}
+
 export interface ResetAppResult {
   ok: boolean;
   message: string;
@@ -109,7 +125,10 @@ export async function resetApp(
   if (current !== workBranch) {
     // After a merge, the repo is already on the original branch — just clear the dashboard.
     if (current === originalBranch && (state.mergeStatus as string | undefined) === "merged") {
-      await saveState({ status: "idle" }, stateFile);
+      await saveState({
+        status: "idle",
+        lastOutcome: { kind: "merged-cleared", originalBranch, workBranch, at: new Date().toISOString() },
+      }, stateFile);
       return { ok: true, message: `Already on '${originalBranch}' — the modernization was merged. Dashboard reset to idle.` };
     }
     return {
@@ -119,28 +138,49 @@ export async function resetApp(
     };
   }
 
+  const worktreeRoot = await getWorktreeRoot(projectPath);
+
   try {
     // Discard all uncommitted changes from the modernization run before switching back.
     // The work is safely committed on the work branch — uncommitted leftovers are artifacts.
     await git(["checkout", "."]);
     await git(["clean", "-fd"]);
-    await git(["checkout", originalBranch]);
+    if (worktreeRoot) {
+      // In a worktree the "original branch" already lives in the root checkout, so there is
+      // nothing to switch to here — just remove the worktree. The work branch stays as backup.
+      await execFileAsync("git", ["-C", worktreeRoot, "worktree", "remove", projectPath], { timeout: 10000 });
+    } else {
+      await git(["checkout", originalBranch]);
+    }
   } catch (error) {
     return { ok: false, message: `Cannot reset: failed to switch to '${originalBranch}' (${(error as Error).message}).` };
   }
 
-  let note = `Switched back to '${originalBranch}'. Modernization work is preserved on '${workBranch}'.`;
+  let note = worktreeRoot
+    ? `Removed the modernization worktree at '${projectPath}'. Work is preserved on '${workBranch}'.`
+    : `Switched back to '${originalBranch}'. Modernization work is preserved on '${workBranch}'.`;
   if (removeWorkBranch) {
+    // After `worktree remove` the projectPath checkout is gone, so delete the branch
+    // from the root repo; a normal checkout deletes it in place.
+    const deleteBranch = worktreeRoot
+      ? () => execFileAsync("git", ["-C", worktreeRoot, "branch", "-D", workBranch], { timeout: 10000 })
+      : () => git(["branch", "-D", workBranch]);
     try {
-      await git(["branch", "-D", workBranch]);
-      note = `Switched back to '${originalBranch}' and deleted the modernization branch '${workBranch}'.`;
+      await deleteBranch();
+      note = worktreeRoot
+        ? `Removed the modernization worktree at '${projectPath}' and deleted the branch '${workBranch}'.`
+        : `Switched back to '${originalBranch}' and deleted the modernization branch '${workBranch}'.`;
     } catch (error) {
-      note = `Switched back to '${originalBranch}', but could not delete '${workBranch}' (${(error as Error).message}). `
+      note = `${note.replace(/\.$/, "")}, but could not delete '${workBranch}' (${(error as Error).message}). `
         + "The branch is left in place.";
     }
   }
 
-  await saveState({ status: "idle" }, stateFile);
+  const outcomeKind = (state.mergeStatus as string | undefined) === "merged" ? "merged-cleared" : "reset";
+  await saveState({
+    status: "idle",
+    lastOutcome: { kind: outcomeKind, originalBranch, workBranch, at: new Date().toISOString() },
+  }, stateFile);
   return { ok: true, message: note };
 }
 
@@ -202,12 +242,28 @@ export async function mergeApp(
   const phaseCount = phases.filter(p => p.status === "completed").length;
   const commitMessage = `chore: modernize UI5 app — ${findingsFixed} findings fixed across ${phaseCount} phases`;
 
-  try {
-    await git(["checkout", originalBranch]);
-    await git(["merge", "--no-ff", workBranch, "-m", commitMessage]);
-  } catch (error) {
-    await git(["checkout", workBranch]).catch(() => {});
-    return { ok: false, message: `Merge failed (${(error as Error).message}). Repository is back on '${workBranch}'.` };
+  const worktreeRoot = await getWorktreeRoot(projectPath);
+
+  if (worktreeRoot) {
+    // The root checkout is already on originalBranch (that is why the worktree had to
+    // hold the work branch), so merge directly there without any checkout dance.
+    const rootGit = (args: string[]) => execFileAsync("git", ["-C", worktreeRoot, ...args], { timeout: 10000 });
+    try {
+      await rootGit(["merge", "--no-ff", workBranch, "-m", commitMessage]);
+    } catch (error) {
+      await rootGit(["merge", "--abort"]).catch(() => {});
+      return { ok: false, message: `Merge failed (${(error as Error).message}). The merge was aborted; '${originalBranch}' is unchanged.` };
+    }
+    // The branch is now merged into the root; drop the worktree that held it.
+    await execFileAsync("git", ["-C", worktreeRoot, "worktree", "remove", projectPath], { timeout: 10000 }).catch(() => {});
+  } else {
+    try {
+      await git(["checkout", originalBranch]);
+      await git(["merge", "--no-ff", workBranch, "-m", commitMessage]);
+    } catch (error) {
+      await git(["checkout", workBranch]).catch(() => {});
+      return { ok: false, message: `Merge failed (${(error as Error).message}). Repository is back on '${workBranch}'.` };
+    }
   }
 
   const existing = (await readState(stateFile)) ?? {};

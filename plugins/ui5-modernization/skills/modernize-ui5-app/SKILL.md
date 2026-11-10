@@ -144,10 +144,10 @@ Call `AskUserQuestion` with exactly one question, matching `DASHBOARD_HOST`. Do 
 
 The desktop host renders MCP App widgets **only** for servers registered in `claude_desktop_config.json` — plugin-loaded servers can receive tool calls but their widgets are NOT rendered. Before opening the dashboard widget, you MUST ensure the server is registered in the app config.
 
-**Check** whether the dashboard server is already registered by calling the `setup-desktop-dashboard` tool (server `plugin_ui5-modernization_ui5-modernization-dashboard`) with the appropriate profile. The tool inspects the config and returns one of:
+**Check** whether the dashboard server is already registered by calling the `setup-desktop-dashboard` tool (server `plugin_ui5-modernization_ui5-modernization-dashboard`) with the appropriate profile. The tool inspects the config and returns one of the statuses below. **Branch strictly on the returned `status` field — never on what you expected or intended to happen.** The ⌘Q / restart / continuation-chat flow belongs to **exactly one** status (`waiting-for-quit`) and to no other.
 
-- `status: "configured"` → the server is already registered. Proceed to Step 4 (skip Steps 1–3 — no HTTP server needed in Desktop).
-- `status: "waiting-for-quit"` → the registration is prepared. Tell the user:
+- `status: "configured"` → the server is **already registered and running** — nothing is set up, no restart happens, no continuation chat is opened. Do **NOT** tell the user to quit Claude with ⌘Q. Do **NOT** announce a restart or a Fortsetzungs-Chat. Do **NOT** stop. Simply go straight to Step 4 (`open-dashboard`) and then continue to the verification-mode question. If you catch yourself about to write a ⌘Q / restart message here, you have misread the status — re-read it: `configured` means "carry on in this very session."
+- `status: "waiting-for-quit"` → **and only this status** — the registration is prepared but not yet applied. This is the *only* branch where a restart is involved. Tell the user:
 
   > Das Dashboard wird eingerichtet. Beende Claude einmal vollständig mit **⌘Q**. Die Einrichtung wird abgeschlossen und Claude automatisch wieder geöffnet — mit einem vorbereiteten Fortsetzungs-Chat.
 
@@ -172,7 +172,8 @@ Call the tool with `profile` set to `$DESKTOP_PROFILE`, and optionally `projectP
 - Do NOT skip this step for Desktop — without app-config registration the widget will not render, even though the tool calls work fine (they go through the plugin server)
 - Do NOT manually edit `claude_desktop_config.json` — the `setup-desktop-dashboard` tool handles this safely (backup, atomic write, SHA verification)
 - Do NOT proceed with the workflow after `waiting-for-quit` — the user must quit Claude first
-- If the tool returns `configured`, you can go straight to Step 4 (reset + open-dashboard) — Steps 1–3 are CLI-only
+- Do NOT send the ⌘Q / restart / Fortsetzungs-Chat message on any status other than `waiting-for-quit`. In particular, after `configured` there is **no** restart and **no** continuation chat — telling the user to quit Claude then is a bug: the user quits, nothing resumes, and the run is orphaned. Read the actual `status` string the tool returned and match the message to it.
+- If the tool returns `configured`, you can go straight to Step 4 (reset + open-dashboard) — Steps 1–3 are CLI-only — and continue to the verification-mode question **in this same session**, without any restart
 
 #### Steps 1–4: Server starten und Ansicht öffnen
 

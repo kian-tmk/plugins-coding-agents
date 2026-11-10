@@ -187,7 +187,12 @@ test("reset-app switches the repo back to the original branch and keeps the work
   const branches = (await git(["branch", "--list", workBranch])).stdout.trim();
   assert.ok(branches.includes(workBranch), "work branch kept as backup");
   // Dashboard is idle again.
-  assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "idle");
+  const afterReset = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as Record<string, any>;
+  assert.equal(afterReset?.status, "idle");
+  // The reset is recorded persistently so the confirmation survives a reload / 2nd tab.
+  assert.equal(afterReset?.lastOutcome?.kind, "reset", "lastOutcome records a plain reset");
+  assert.equal(afterReset?.lastOutcome?.originalBranch, originalBranch);
+  assert.equal(afterReset?.lastOutcome?.workBranch, workBranch);
 });
 
 test("reset-app refuses cleanly when no branches were recorded", async (t) => {
@@ -365,7 +370,11 @@ test("reset-app handles post-merge state", async (t) => {
 
   const reset = await client.callTool({ name: "reset-app", arguments: {} });
   assert.notEqual(reset.isError, true);
-  assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.status, "idle");
+  const afterClear = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as Record<string, any>;
+  assert.equal(afterClear?.status, "idle");
+  // Post-merge clear records a distinct, persistent outcome for the idle screen.
+  assert.equal(afterClear?.lastOutcome?.kind, "merged-cleared", "post-merge clear records merged-cleared");
+  assert.equal(afterClear?.lastOutcome?.originalBranch, originalBranch);
 });
 
 // Reproduce hosts that retain only explicitly declared schema properties.

@@ -35,6 +35,15 @@ export const stateSchema = z.object({
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: z.enum(["pending", "merged", "skipped"]).nullable(),
+  // Server-written, persistent confirmation of the last reset/clear action. Read by
+  // the idle screen so the "it worked" message survives a reload or a second tab
+  // (unlike the client-only transient outcome). Cleared when a new run starts.
+  lastOutcome: z.object({
+    kind: z.enum(["reset", "merged-cleared"]),
+    originalBranch: z.string().nullable(),
+    workBranch: z.string().nullable(),
+    at: z.string(),
+  }).nullable(),
   lastGitActivityAt: z.string().nullable(),
   gitActivity: z.object({
     commits: z.array(z.object({ hash: z.string(), message: z.string(), ts: z.string() })),
@@ -42,8 +51,63 @@ export const stateSchema = z.object({
   }).nullable(),
 }).partial().passthrough();
 
-export const updateSchema = stateSchema.refine(
-  value => Object.keys(value).some(key => key in stateSchema.shape
-    && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt", "mergedAt"].includes(key)),
-  "Supply at least one writable modernization status field. Empty or clock-only updates are not saved.",
-);
+// Clock/meta fields the server manages itself — present in the schema so they parse,
+// but they do not count as a meaningful update on their own.
+const CLOCK_ONLY_FIELDS = ["startedAt", "phaseStartedAt", "completedAt", "stoppedAt", "mergedAt"];
+
+// Every field a caller may actually write (the schema minus the server-managed clocks).
+const WRITABLE_FIELDS = Object.keys(stateSchema.shape).filter(k => !CLOCK_ONLY_FIELDS.includes(k));
+
+// Suggest the closest writable field name for a key the caller got slightly wrong
+// (case, singular/plural, a stray prefix). Pure string overlap — no dependency.
+function suggestField(key: string): string | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = norm(key);
+  if (!target) return undefined;
+  let best: string | undefined;
+  let bestScore = 0;
+  for (const field of WRITABLE_FIELDS) {
+    const candidate = norm(field);
+    if (candidate === target) return field;
+    // Longest shared prefix + containment as a cheap similarity score.
+    let prefix = 0;
+    while (prefix < candidate.length && prefix < target.length && candidate[prefix] === target[prefix]) prefix++;
+    const contains = candidate.includes(target) || target.includes(candidate) ? 2 : 0;
+    const score = prefix + contains;
+    if (score > bestScore) { bestScore = score; best = field; }
+  }
+  return bestScore >= 3 ? best : undefined;
+}
+
+export const updateSchema = stateSchema.superRefine((value, ctx) => {
+  const keys = Object.keys(value);
+  const hasWritable = keys.some(key => key in stateSchema.shape && !CLOCK_ONLY_FIELDS.includes(key));
+  if (hasWritable) return;
+
+  // Nothing writable arrived. Build a diagnostic message so a caller that used the
+  // wrong field names (or wrapped the payload) can correct itself instead of guessing.
+  const unknown = keys.filter(key => !(key in stateSchema.shape));
+  const clockOnly = keys.filter(key => CLOCK_ONLY_FIELDS.includes(key));
+
+  let message = "Supply at least one writable modernization status field. Empty or clock-only updates are not saved.";
+  if (keys.length === 0) {
+    message += " You sent an empty object — send the status fields directly as top-level keys (e.g. status, currentPhase, phases, currentActivity).";
+  } else {
+    message += ` Received keys: [${keys.join(", ")}].`;
+    if (unknown.length) {
+      const hints = unknown
+        .map(key => { const s = suggestField(key); return s ? `${key} → ${s}` : null; })
+        .filter(Boolean);
+      message += ` Unrecognized: [${unknown.join(", ")}] (not merged).`;
+      if (hints.length) message += ` Did you mean: ${hints.join(", ")}?`;
+      // A single unknown key often means the payload was wrapped in an envelope.
+      if (keys.length === 1 && value[keys[0]] !== null && typeof value[keys[0]] === "object")
+        message += ` If '${keys[0]}' wraps the real fields, send those fields at the top level, not nested.`;
+    }
+    if (clockOnly.length && !unknown.length) {
+      message += ` Only server-managed clock fields were sent ([${clockOnly.join(", ")}]); set currentPhase for phase timing instead of these.`;
+    }
+  }
+  ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+});
+

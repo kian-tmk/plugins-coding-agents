@@ -149,6 +149,12 @@ interface ModernizationState {
   lastGitActivityAt: string | null;
   mergedAt: string | null;
   mergeStatus: "pending" | "merged" | "skipped" | null;
+  lastOutcome: {
+    kind: "reset" | "merged-cleared";
+    originalBranch: string | null;
+    workBranch: string | null;
+    at: string;
+  } | null;
   serverBuild: string | null;
 }
 
@@ -716,7 +722,7 @@ function renderMergeStatus(state: ModernizationState, justMerged = false, force 
   // Don't clobber an open inline-confirm row with a background poll re-render.
   if (!force && !justMerged && mergeEl.querySelector(".confirm-row")) return;
   if (!state.workBranch || !state.originalBranch || state.status === "stopped") {
-    mergeEl.innerHTML = "";
+    if (mergeEl.innerHTML !== "") { mergeEl.innerHTML = ""; mergeEl.removeAttribute("data-sig"); }
     return;
   }
 
@@ -724,12 +730,19 @@ function renderMergeStatus(state: ModernizationState, justMerged = false, force 
   const anyFailed = phases.some(p => p.status === "failed" || p.gateStatus === "failed");
   const hasDeferred = (state.deferredIssues?.length ?? 0) > 0;
 
-  if (state.mergeStatus === "merged" || justMerged) {
+  // Skip re-render when nothing visible changed — otherwise the 1.5s poll rebuilds
+  // the merge button and a click landing in that window hits a detached element.
+  const merged = state.mergeStatus === "merged" || justMerged;
+  const sig = `${merged}|${anyFailed}|${hasDeferred}|${state.deferredIssues?.length ?? 0}|${state.workBranch}|${state.originalBranch}`;
+  if (!force && !justMerged && mergeEl.getAttribute("data-sig") === sig) return;
+
+  if (merged) {
     mergeEl.innerHTML = `
       <div class="merge-note merge-note-success">
         <ui5-icon name="combine"></ui5-icon>
         Merged <code>${escapeHtml(state.workBranch)}</code> into <code>${escapeHtml(state.originalBranch)}</code>.
       </div>`;
+    mergeEl.setAttribute("data-sig", sig);
     return;
   }
 
@@ -739,6 +752,7 @@ function renderMergeStatus(state: ModernizationState, justMerged = false, force 
         <ui5-icon name="error"></ui5-icon>
         Auto-merge blocked — one or more verification gates failed. Review the failures first.
       </div>`;
+    mergeEl.setAttribute("data-sig", sig);
     return;
   }
 
@@ -756,6 +770,7 @@ function renderMergeStatus(state: ModernizationState, justMerged = false, force 
   mergeEl.innerHTML = `
     ${note}
     <ui5-button id="btn-merge-app" icon="combine" design="${btnDesign}">Merge into ${escapeHtml(state.originalBranch)}</ui5-button>`;
+  mergeEl.setAttribute("data-sig", sig);
   document.getElementById("btn-merge-app")?.addEventListener("click", () => {
     // Only the deferred-issues case needs a confirmation (it merges unresolved work);
     // a clean merge runs straight away, matching the previous no-prompt behavior.
@@ -829,9 +844,17 @@ function renderResetButton(state: ModernizationState, force = false) {
   // Don't clobber an open inline-confirm row with a background poll re-render —
   // only an explicit rewire (force) or the branch-absent case may replace it.
   if (!force && resetEl.querySelector(".confirm-row")) return;
-  if (!(state.workBranch && state.originalBranch)) { resetEl.innerHTML = ""; return; }
+  if (!(state.workBranch && state.originalBranch)) {
+    if (resetEl.innerHTML !== "") { resetEl.innerHTML = ""; resetEl.removeAttribute("data-sig"); }
+    return;
+  }
   const merged = state.mergeStatus === "merged";
   const resetLabel = merged ? "Clear dashboard" : "Reset app to original state";
+  // Skip the re-render when nothing visible changed — rewriting innerHTML on every
+  // 1.5s poll destroys and recreates the button, so a click landing in that window
+  // hits a detached element and is lost. Keeping the DOM stable fixes that.
+  const sig = `${merged}|${state.workBranch}|${state.originalBranch}|${state.projectPath ?? ""}`;
+  if (!force && resetEl.getAttribute("data-sig") === sig && resetEl.querySelector("#btn-reset-app")) return;
   const resetNote = merged
     ? `Merged into <code>${escapeHtml(state.originalBranch)}</code>. Clear the dashboard to start fresh.`
     : `Modernization ran on <code>${escapeHtml(state.workBranch)}</code>. `
@@ -840,6 +863,7 @@ function renderResetButton(state: ModernizationState, force = false) {
   resetEl.innerHTML = `
     <div class="reset-note">${resetNote}</div>
     <ui5-button id="btn-reset-app" icon="history" design="Transparent">${resetLabel}</ui5-button>`;
+  resetEl.setAttribute("data-sig", sig);
   document.getElementById("btn-reset-app")?.addEventListener("click", () => {
     confirmInline({
       container: resetEl,
@@ -921,33 +945,202 @@ async function resetApp(state: ModernizationState) {
   const { failed, message } = await callAction("/api/reset-app", "reset-app");
   if (failed) {
     // Inline status is the only feedback channel — window.alert is blocked in the
-    // sandboxed Desktop iframe. Re-render the button so the user can retry.
+    // sandboxed Desktop iframe. Re-render the button (force, since the confirm path
+    // replaced it with the confirm row) so the user can retry.
     setActionStatus("error", message || "Reset not performed.");
-    renderResetButton(state);
+    renderResetButton(state, true);
     return;
   }
 
-  // Success: server set state to idle. Repurpose the idle screen as a reset
-  // confirmation so the user gets a lasting "it worked, here's your backup"
-  // message instead of a blank screen (the completed-screen status line is
-  // hidden the moment we switch away).
+  // Success: the server set state to idle AND wrote a persistent lastOutcome, so the
+  // confirmation survives a reload / second tab (renderIdle reads it from state). We
+  // also set the transient outcome here for immediate feedback before the next poll.
   setActionStatus("ok", message || "Reset complete.");
-  setIdleMessage(
-    "App ist wieder auf dem alten Stand",
-    `Zurückgesetzt auf „${state.originalBranch}“. Deine Modernisierung liegt als Backup auf dem Branch „${state.workBranch}“.`,
-  );
+  setIdleOutcome(outcomeMessage({
+    kind: state.mergeStatus === "merged" ? "merged-cleared" : "reset",
+    originalBranch: state.originalBranch ?? null,
+    workBranch: state.workBranch ?? null,
+    at: new Date().toISOString(),
+  }));
+}
+
+// Override the idle screen's title + subtitle, and style it as a neutral / success
+// / error / warning state with an optional action button. Used to repurpose the
+// idle screen as a general status/confirmation surface (reset, merge+clear, stale
+// run, server unreachable, …). Plain DOM writes — renderIdle decides what to show.
+type IdleVariant = "neutral" | "success" | "error" | "warning";
+interface IdleMessageOpts {
+  title: string;
+  subtitle: string;
+  variant?: IdleVariant;
+  hint?: boolean;
+  action?: { label: string; icon?: string; onClick: () => void };
+}
+
+const IDLE_VARIANT_ICON: Record<IdleVariant, string | null> = {
+  neutral: null,
+  success: "sys-enter-2",
+  error: "error",
+  warning: "alert",
+};
+
+function setIdleMessage(opts: IdleMessageOpts): void;
+function setIdleMessage(title: string, subtitle: string): void; // back-compat overload
+function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
+  const opts: IdleMessageOpts = typeof a === "string"
+    ? { title: a, subtitle: b ?? "", variant: "success" }
+    : a;
+  const variant: IdleVariant = opts.variant ?? "neutral";
+
+  const titleEl = document.getElementById("idle-title-text");
+  if (titleEl) titleEl.textContent = opts.title;
+  const illus = document.getElementById("idle-illustration");
+  if (illus) illus.setAttribute("subtitle-text", opts.subtitle);
+
+  // Variant class drives the accent colour (idle-<variant> on .idle-wrap).
+  const wrap = document.getElementById("idle-wrap");
+  if (wrap) {
+    wrap.classList.remove("idle-neutral", "idle-success", "idle-error", "idle-warning");
+    wrap.classList.add(`idle-${variant}`);
+  }
+
+  // Accent icon: hidden for neutral, otherwise the per-variant glyph.
+  const vIcon = document.getElementById("idle-variant-icon") as any;
+  if (vIcon) {
+    const name = IDLE_VARIANT_ICON[variant];
+    if (name) { vIcon.setAttribute("name", name); vIcon.classList.remove("hidden"); }
+    else vIcon.classList.add("hidden");
+  }
+
+  // Hint line: shown by default only for neutral, unless explicitly overridden.
+  const hint = document.getElementById("idle-hint");
+  if (hint) hint.style.display = (opts.hint ?? variant === "neutral") ? "" : "none";
+
+  // Optional action button (e.g. "Zurücksetzen auf main").
+  const actionEl = document.getElementById("idle-action");
+  if (actionEl) {
+    actionEl.innerHTML = "";
+    if (opts.action) {
+      const btn = document.createElement("ui5-button") as any;
+      btn.textContent = opts.action.label;
+      if (opts.action.icon) btn.setAttribute("icon", opts.action.icon);
+      btn.setAttribute("design", variant === "error" || variant === "warning" ? "Emphasized" : "Default");
+      btn.addEventListener("click", opts.action.onClick);
+      actionEl.appendChild(btn);
+      actionEl.classList.remove("hidden");
+    } else {
+      actionEl.classList.add("hidden");
+    }
+  }
+}
+
+// Reset the idle screen to its plain "ready" state (neutral, hint visible, no
+// action). Called when a genuinely fresh idle state arrives with no outcome to show.
+function resetIdleToReady(): void {
+  setIdleMessage({
+    title: "UI5 Modernization",
+    subtitle: "Bereit für die Modernisierung",
+    variant: "neutral",
+    hint: true,
+  });
+}
+
+// A transient outcome set by an action handler for IMMEDIATE feedback (before the
+// next poll round-trips). The reload-safe source of truth is the server-written
+// state.lastOutcome, read in renderIdle — this flag just avoids a one-poll flicker
+// between the action and the server state coming back. Cleared when a new run starts.
+let pendingIdleOutcome: IdleMessageOpts | null = null;
+
+function setIdleOutcome(opts: IdleMessageOpts): void {
+  pendingIdleOutcome = opts;
+  setIdleMessage(opts);
   showScreen("idle");
 }
 
-// Override the idle screen's title + subtitle (used after a reset to confirm the
-// outcome). Plain textContent/attribute writes — the next idle poll leaves them.
-function setIdleMessage(title: string, subtitle: string) {
-  const titleEl = document.getElementById("idle-title-text");
-  if (titleEl) titleEl.textContent = title;
-  const illus = document.getElementById("idle-illustration");
-  if (illus) illus.setAttribute("subtitle-text", subtitle);
-  const hint = document.getElementById("idle-hint");
-  if (hint) hint.style.display = "none";
+// Build the idle-screen message for a server-persisted reset/clear outcome. This is
+// what makes the confirmation survive a reload or a second tab: it comes from state,
+// not from a client-only flag.
+function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>): IdleMessageOpts {
+  if (outcome.kind === "merged-cleared") {
+    return {
+      title: "Erfolgreich gemerged und aufgeräumt",
+      subtitle: `„${outcome.workBranch}“ wurde nach „${outcome.originalBranch}“ gemerged. Das Dashboard ist zurückgesetzt.`,
+      variant: "success",
+    };
+  }
+  return {
+    title: "App ist wieder auf dem alten Stand",
+    subtitle: `Zurückgesetzt auf „${outcome.originalBranch}“. Deine Modernisierung liegt als Backup auf dem Branch „${outcome.workBranch}“.`,
+    variant: "success",
+  };
+}
+
+// Decide what the idle screen shows, in priority order. Called from applyState's
+// idle/stale branch and on REST-only error paths.
+function renderIdle(state: ModernizationState | null): void {
+  showScreen("idle");
+
+  // 1. A client-only error outcome (server unreachable) wins — it is set only while
+  //    the server can't be reached, so there is no state.lastOutcome to rely on.
+  if (pendingIdleOutcome?.variant === "error") { setIdleMessage(pendingIdleOutcome); return; }
+
+  // 2. Server-persisted reset/clear confirmation — reload- and tab-safe. Preferred
+  //    over the transient flag so a refresh still shows "it worked".
+  if (state?.lastOutcome) { setIdleMessage(outcomeMessage(state.lastOutcome)); return; }
+
+  // 3. Transient success outcome set this session (immediate feedback before the
+  //    server state round-trips). Harmless to keep as a fallback.
+  if (pendingIdleOutcome) { setIdleMessage(pendingIdleOutcome); return; }
+
+  // 4. Paused — status does not exist server-side yet; this branch is wired so the
+  //    display simply works once a future `status:"paused"` (or state.paused) lands.
+  const paused = state && ((state.status as string) === "paused" || (state as any).paused === true);
+  if (paused) {
+    setIdleMessage({
+      title: "Pausiert",
+      subtitle: "Der Modernisierungslauf ist pausiert.",
+      variant: "warning",
+      hint: false,
+    });
+    return;
+  }
+
+  // 3. Stale run (>24h) — surface the interrupted run + offer a reset.
+  const isStale = !!(state && state.status === "running" && state.startedAt
+    && (Date.now() - new Date(state.startedAt).getTime()) > 24 * 60 * 60 * 1000);
+  if (isStale && state) {
+    const started = state.startedAt ? new Date(state.startedAt).toLocaleDateString("de-DE") : "unbekannt";
+    const canReset = !!(state.workBranch && state.originalBranch);
+    setIdleMessage({
+      title: `Lauf vom ${started} unterbrochen`,
+      subtitle: canReset
+        ? `Der Lauf hängt auf „${state.workBranch}". Setze auf „${state.originalBranch}" zurück, um aufzuräumen.`
+        : "Der Lauf scheint unterbrochen. Kein Backup-Branch hinterlegt.",
+      variant: "warning",
+      hint: false,
+      action: canReset
+        ? { label: `Zurücksetzen auf ${state.originalBranch}`, icon: "history", onClick: () => resetApp(state) }
+        : undefined,
+    });
+    return;
+  }
+
+  // 4. Linter running (Phase 0) — a running state with no phases yet. The dashboard
+  //    screen can't be filled meaningfully, so keep a neutral busy idle screen.
+  const linterRunning = !!(state && state.status === "running"
+    && (!Array.isArray(state.phases) || state.phases.length === 0));
+  if (linterRunning) {
+    setIdleMessage({
+      title: "UI5 Modernization",
+      subtitle: "Linter-Analyse läuft…",
+      variant: "neutral",
+      hint: true,
+    });
+    return;
+  }
+
+  // 5. Default — plain ready state.
+  resetIdleToReady();
 }
 
 // ── State handling ────────────────────────────────────────────────────────────
@@ -999,6 +1192,11 @@ function applyState(raw: unknown) {
 
   renderBuildInfo(state.serverBuild ?? null);
 
+  // A fresh, valid state means the server is reachable again — drop a stale
+  // "unreachable" error outcome. Success outcomes (reset/merge) are kept; they
+  // are cleared only when a new run starts (see the running branch below).
+  if (pendingIdleOutcome?.variant === "error") pendingIdleOutcome = null;
+
   if (Array.isArray(state.phases)) {
     state.phases = state.phases.map((p, i) =>
       normalizePhase(p as unknown as Record<string, unknown>, i)
@@ -1011,8 +1209,21 @@ function applyState(raw: unknown) {
 
   if (state.status === "idle" || !state.status || isStale) {
     stopLiveTimer();
-    showScreen("idle");
+    renderIdle(state);
   } else if (state.status === "running") {
+    // A genuine new run supersedes any transient idle outcome (reset/merge/error).
+    if (!isStale) pendingIdleOutcome = null;
+    // Phase 0 (linter running): no phases pushed yet — the dashboard would be an
+    // empty "PHASE — OF 0" shell, so show a neutral busy idle screen until the
+    // first real phase state arrives.
+    const noPhasesYet = (!Array.isArray(state.phases) || state.phases.length === 0)
+      && (!state.currentPhase || state.currentPhase === 0);
+    if (noPhasesYet) {
+      stopLiveTimer();
+      renderIdle(state);
+      lastStatus = state.status;
+      return;
+    }
     showScreen("dashboard");
     renderDashboard(state);
     const lastActive = state.lastGitActivityAt ? new Date(state.lastGitActivityAt).getTime() : null;
@@ -1181,7 +1392,19 @@ async function poll() {
   try {
     if (standaloneMode) {
       const state = await fetchRestStatus();
-      if (state) applyState(state);
+      if (state) {
+        applyState(state);
+      } else if (!screenIdle.classList.contains("hidden")) {
+        // REST stopped answering while the idle screen is up — surface it rather
+        // than leaving a stale "Bereit". A running/completed screen is left intact
+        // (a single dropped poll shouldn't tear it down); the next good poll heals.
+        setIdleOutcome({
+          title: "Dashboard-Server nicht erreichbar",
+          subtitle: "Verbindung zum Status unterbrochen. Es wird erneut versucht…",
+          variant: "error",
+          hint: false,
+        });
+      }
     } else {
       const result = await app.callServerTool(
         { name: "get-status", arguments: {} },
@@ -1286,7 +1509,8 @@ app.connect().then(async () => {
       renderCompleted(restState);
       startPolling();
     } else {
-      showScreen("idle");
+      // Reached the MCP server but got idle/unknown — plain idle, keep polling.
+      renderIdle(restState);
       startPolling();
     }
   }
@@ -1304,9 +1528,20 @@ app.connect().then(async () => {
     showScreen("completed");
     renderCompleted(state);
     startPolling();
+  } else if (state) {
+    // REST reachable, idle/unknown — plain idle, keep polling for pushes.
+    renderIdle(state);
+    startPolling();
   } else {
-    showScreen("idle");
-    // Start polling even on idle — the agent may push "running" state via curl
+    // Neither MCP nor REST answered — the server is genuinely unreachable. Say so
+    // instead of a blank "Bereit" screen. Polling keeps retrying; a later success
+    // clears this via a fresh state. (Desktop uses the conn-status strip instead.)
+    setIdleOutcome({
+      title: "Dashboard-Server nicht erreichbar",
+      subtitle: "Der Status konnte nicht geladen werden. Läuft der Dashboard-Server? Es wird erneut versucht…",
+      variant: "error",
+      hint: false,
+    });
     startPolling();
   }
 });

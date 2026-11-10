@@ -57,6 +57,21 @@ body {
   margin-left: 5px;
   font-size: 10px;
 }
+/* Variant accent icon shown below the illustration (hidden for the neutral state).
+   Colour is driven by the idle-<variant> modifier on .idle-wrap, mirroring the
+   merge-note-* scheme. */
+.idle-variant-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.idle-variant-icon.hidden { display: none; }
+.idle-action { margin-top: 4px; }
+.idle-action.hidden { display: none; }
+.idle-success .idle-variant-icon { color: var(--sapPositiveColor, #3fb950); }
+.idle-error .idle-variant-icon { color: var(--sapNegativeColor, #f85149); }
+.idle-warning .idle-variant-icon { color: var(--sapCriticalElementColor, #f7bf00); }
+.idle-neutral .idle-variant-icon { color: var(--sapNeutralColor, #6a6d70); }
+
 
 /* ── Buttons (markdown overlay only) ── */
 .btn-ghost {

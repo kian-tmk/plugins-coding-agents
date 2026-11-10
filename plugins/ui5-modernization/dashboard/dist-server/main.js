@@ -61466,6 +61466,15 @@ var stateSchema = external_exports.object({
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: external_exports.enum(["pending", "merged", "skipped"]).nullable(),
+  // Server-written, persistent confirmation of the last reset/clear action. Read by
+  // the idle screen so the "it worked" message survives a reload or a second tab
+  // (unlike the client-only transient outcome). Cleared when a new run starts.
+  lastOutcome: external_exports.object({
+    kind: external_exports.enum(["reset", "merged-cleared"]),
+    originalBranch: external_exports.string().nullable(),
+    workBranch: external_exports.string().nullable(),
+    at: external_exports.string()
+  }).nullable(),
   lastGitActivityAt: external_exports.string().nullable(),
   gitActivity: external_exports.object({
     commits: external_exports.array(external_exports.object({ hash: external_exports.string(), message: external_exports.string(), ts: external_exports.string() })),
@@ -61473,10 +61482,55 @@ var stateSchema = external_exports.object({
     lastPolledAt: external_exports.string()
   }).nullable()
 }).partial().passthrough();
-var updateSchema = stateSchema.refine(
-  (value) => Object.keys(value).some((key) => key in stateSchema.shape && !["startedAt", "phaseStartedAt", "completedAt", "stoppedAt", "mergedAt"].includes(key)),
-  "Supply at least one writable modernization status field. Empty or clock-only updates are not saved."
-);
+var CLOCK_ONLY_FIELDS = ["startedAt", "phaseStartedAt", "completedAt", "stoppedAt", "mergedAt"];
+var WRITABLE_FIELDS = Object.keys(stateSchema.shape).filter((k) => !CLOCK_ONLY_FIELDS.includes(k));
+function suggestField(key) {
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = norm(key);
+  if (!target) return void 0;
+  let best;
+  let bestScore = 0;
+  for (const field of WRITABLE_FIELDS) {
+    const candidate = norm(field);
+    if (candidate === target) return field;
+    let prefix = 0;
+    while (prefix < candidate.length && prefix < target.length && candidate[prefix] === target[prefix]) prefix++;
+    const contains = candidate.includes(target) || target.includes(candidate) ? 2 : 0;
+    const score = prefix + contains;
+    if (score > bestScore) {
+      bestScore = score;
+      best = field;
+    }
+  }
+  return bestScore >= 3 ? best : void 0;
+}
+var updateSchema = stateSchema.superRefine((value, ctx) => {
+  const keys = Object.keys(value);
+  const hasWritable = keys.some((key) => key in stateSchema.shape && !CLOCK_ONLY_FIELDS.includes(key));
+  if (hasWritable) return;
+  const unknown2 = keys.filter((key) => !(key in stateSchema.shape));
+  const clockOnly = keys.filter((key) => CLOCK_ONLY_FIELDS.includes(key));
+  let message = "Supply at least one writable modernization status field. Empty or clock-only updates are not saved.";
+  if (keys.length === 0) {
+    message += " You sent an empty object \u2014 send the status fields directly as top-level keys (e.g. status, currentPhase, phases, currentActivity).";
+  } else {
+    message += ` Received keys: [${keys.join(", ")}].`;
+    if (unknown2.length) {
+      const hints = unknown2.map((key) => {
+        const s = suggestField(key);
+        return s ? `${key} \u2192 ${s}` : null;
+      }).filter(Boolean);
+      message += ` Unrecognized: [${unknown2.join(", ")}] (not merged).`;
+      if (hints.length) message += ` Did you mean: ${hints.join(", ")}?`;
+      if (keys.length === 1 && value[keys[0]] !== null && typeof value[keys[0]] === "object")
+        message += ` If '${keys[0]}' wraps the real fields, send those fields at the top level, not nested.`;
+    }
+    if (clockOnly.length && !unknown2.length) {
+      message += ` Only server-managed clock fields were sent ([${clockOnly.join(", ")}]); set currentPhase for phase timing instead of these.`;
+    }
+  }
+  ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message });
+});
 
 // state-store.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -61508,7 +61562,7 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "39bc1a7 \xB7 2026-11-06T11:00" : "dev";
+var SERVER_BUILD = true ? "edec2ff \xB7 2026-11-09T16:17" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";
@@ -61541,6 +61595,17 @@ async function writeState2(stateFile, patch) {
   await saveState(merged, stateFile);
   return merged;
 }
+async function getWorktreeRoot(projectPath) {
+  try {
+    const gitDir = (await execFileAsync("git", ["rev-parse", "--git-dir"], { cwd: projectPath, timeout: 1e4 })).stdout.trim();
+    const marker = "/.git/worktrees/";
+    const idx = gitDir.indexOf(marker);
+    if (idx === -1) return null;
+    return gitDir.slice(0, idx);
+  } catch {
+    return null;
+  }
+}
 async function resetApp({ removeWorkBranch = false, stateFile = STATE_FILE } = {}) {
   const state = await readState(stateFile) ?? {};
   const projectPath = state.projectPath;
@@ -61561,7 +61626,10 @@ async function resetApp({ removeWorkBranch = false, stateFile = STATE_FILE } = {
   }
   if (current !== workBranch) {
     if (current === originalBranch && state.mergeStatus === "merged") {
-      await saveState({ status: "idle" }, stateFile);
+      await saveState({
+        status: "idle",
+        lastOutcome: { kind: "merged-cleared", originalBranch, workBranch, at: (/* @__PURE__ */ new Date()).toISOString() }
+      }, stateFile);
       return { ok: true, message: `Already on '${originalBranch}' \u2014 the modernization was merged. Dashboard reset to idle.` };
     }
     return {
@@ -61569,23 +61637,33 @@ async function resetApp({ removeWorkBranch = false, stateFile = STATE_FILE } = {
       message: `Cannot reset: the repository is on '${current}', not the modernization branch '${workBranch}'. Switch back manually if you intend to reset. Nothing was changed.`
     };
   }
+  const worktreeRoot = await getWorktreeRoot(projectPath);
   try {
     await git(["checkout", "."]);
     await git(["clean", "-fd"]);
-    await git(["checkout", originalBranch]);
+    if (worktreeRoot) {
+      await execFileAsync("git", ["-C", worktreeRoot, "worktree", "remove", projectPath], { timeout: 1e4 });
+    } else {
+      await git(["checkout", originalBranch]);
+    }
   } catch (error62) {
     return { ok: false, message: `Cannot reset: failed to switch to '${originalBranch}' (${error62.message}).` };
   }
-  let note = `Switched back to '${originalBranch}'. Modernization work is preserved on '${workBranch}'.`;
+  let note = worktreeRoot ? `Removed the modernization worktree at '${projectPath}'. Work is preserved on '${workBranch}'.` : `Switched back to '${originalBranch}'. Modernization work is preserved on '${workBranch}'.`;
   if (removeWorkBranch) {
+    const deleteBranch = worktreeRoot ? () => execFileAsync("git", ["-C", worktreeRoot, "branch", "-D", workBranch], { timeout: 1e4 }) : () => git(["branch", "-D", workBranch]);
     try {
-      await git(["branch", "-D", workBranch]);
-      note = `Switched back to '${originalBranch}' and deleted the modernization branch '${workBranch}'.`;
+      await deleteBranch();
+      note = worktreeRoot ? `Removed the modernization worktree at '${projectPath}' and deleted the branch '${workBranch}'.` : `Switched back to '${originalBranch}' and deleted the modernization branch '${workBranch}'.`;
     } catch (error62) {
-      note = `Switched back to '${originalBranch}', but could not delete '${workBranch}' (${error62.message}). The branch is left in place.`;
+      note = `${note.replace(/\.$/, "")}, but could not delete '${workBranch}' (${error62.message}). The branch is left in place.`;
     }
   }
-  await saveState({ status: "idle" }, stateFile);
+  const outcomeKind = state.mergeStatus === "merged" ? "merged-cleared" : "reset";
+  await saveState({
+    status: "idle",
+    lastOutcome: { kind: outcomeKind, originalBranch, workBranch, at: (/* @__PURE__ */ new Date()).toISOString() }
+  }, stateFile);
   return { ok: true, message: note };
 }
 async function mergeApp({ stateFile = STATE_FILE } = {}) {
@@ -61630,13 +61708,27 @@ async function mergeApp({ stateFile = STATE_FILE } = {}) {
   const findingsFixed = typeof state.findingsFixed === "number" ? state.findingsFixed : 0;
   const phaseCount = phases.filter((p) => p.status === "completed").length;
   const commitMessage = `chore: modernize UI5 app \u2014 ${findingsFixed} findings fixed across ${phaseCount} phases`;
-  try {
-    await git(["checkout", originalBranch]);
-    await git(["merge", "--no-ff", workBranch, "-m", commitMessage]);
-  } catch (error62) {
-    await git(["checkout", workBranch]).catch(() => {
+  const worktreeRoot = await getWorktreeRoot(projectPath);
+  if (worktreeRoot) {
+    const rootGit = (args) => execFileAsync("git", ["-C", worktreeRoot, ...args], { timeout: 1e4 });
+    try {
+      await rootGit(["merge", "--no-ff", workBranch, "-m", commitMessage]);
+    } catch (error62) {
+      await rootGit(["merge", "--abort"]).catch(() => {
+      });
+      return { ok: false, message: `Merge failed (${error62.message}). The merge was aborted; '${originalBranch}' is unchanged.` };
+    }
+    await execFileAsync("git", ["-C", worktreeRoot, "worktree", "remove", projectPath], { timeout: 1e4 }).catch(() => {
     });
-    return { ok: false, message: `Merge failed (${error62.message}). Repository is back on '${workBranch}'.` };
+  } else {
+    try {
+      await git(["checkout", originalBranch]);
+      await git(["merge", "--no-ff", workBranch, "-m", commitMessage]);
+    } catch (error62) {
+      await git(["checkout", workBranch]).catch(() => {
+      });
+      return { ok: false, message: `Merge failed (${error62.message}). Repository is back on '${workBranch}'.` };
+    }
   }
   const existing = await readState(stateFile) ?? {};
   await saveState({ ...existing, mergeStatus: "merged", mergedAt: (/* @__PURE__ */ new Date()).toISOString() }, stateFile);
