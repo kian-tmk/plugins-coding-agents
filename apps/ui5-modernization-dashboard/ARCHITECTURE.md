@@ -312,6 +312,22 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
+### 2026-11-10 — Idle-Screen-Upgrade (🚧 in Arbeit), worktree-aware reset/merge, Schema-Diagnose
+
+- **🚧 Idle-Screen als genereller Zustands-/Info-Screen (noch in Arbeit):** `setIdleMessage` zu einem Varianten-Helper ausgebaut (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe via `idle-<variant>`-Klassen, optionaler Action-Button). Neue `renderIdle(state)`-Funktion mit Prioritätslogik deckt Ready, Stale-Run (>24h, mit Reset-Button), Linter-läuft (Phase 0), Server-nicht-erreichbar und Reset/Merge-Bestätigung ab; Pausiert-Darstellung ist vorbereitet (noch kein Server-Status). **Offen:** visuelle Verifikation im echten Desktop-Widget steht noch aus (Browser-Pfad per MCP geprüft, Desktop-Klicktest ausstehend).
+- **Reload-feste Reset-Bestätigung (`lastOutcome`):** Der Server schreibt nach Reset/Clear `status:"idle"` **plus** ein persistentes `lastOutcome` (`kind:"reset"|"merged-cleared"`, Branch-Namen, Zeitstempel) ins State-Schema. Der Idle-Screen liest das aus dem State statt aus einem client-lokalen Flag — die „App zurückgesetzt"-Meldung überlebt jetzt Reload und zweiten Tab. Ein neuer Lauf (`isNewRun`) verwirft `lastOutcome` automatisch.
+- **Worktree-aware `reset-app`/`merge-app`:** Neuer Helper `getWorktreeRoot()` erkennt, ob `projectPath` ein Git-Worktree ist (Desktop „Use worktree"). Reset entfernt dann den Worktree (`git worktree remove`) statt Branch-Wechsel; Merge läuft direkt im Root-Repo (das schon auf dem Original-Branch steht) mit `merge --abort` als Rollback. Normale Checkouts unverändert.
+- **Poll-Idempotenz für Reset/Merge-Buttons:** `renderResetButton`/`renderMergeStatus` überspringen das `innerHTML`-Neuschreiben, wenn sich die Render-Signatur (`data-sig`) nicht geändert hat. Verhindert, dass der 1,5-s-Poll den Button unter einem Klick austauscht. Fehlerpfade re-rendern mit `force`.
+- **`update-status`-Schema diagnostisch (`superRefine`):** Die „Supply at least one writable field"-Ablehnung listet jetzt empfangene Keys, unbekannte Keys und Korrekturvorschläge (z.B. `phase → phases`, `current_phase → currentPhase`) und erkennt Wrapper-Payloads (`{arguments:{…}}`). Hintergrund: schwächere Modelle trafen Feldnamen/Struktur unzuverlässig und drehten ohne Hinweis Rückversuch-Schleifen; das JSON-Schema des Tools bleibt unverändert.
+- **Tests:** reset-app-Tests um `lastOutcome`-Assertions erweitert (reset + merged-cleared). 9/9 grün.
+- Commit `d988576`.
+
+### 2026-11-06 — Desktop-Sandbox: tote Buttons + fehlendes Polling
+
+- **Reset/Merge-Buttons tot in Desktop-Sandbox (`39bc1a7`):** `window.confirm`/`alert` sind im sandboxed Desktop-MCP-App-iframe blockiert (liefern `false` ohne Dialog) — die destruktiven Buttons wirkten dadurch funktionslos. Ersetzt durch eine Inline-Confirm-Zeile (`confirmInline`): Button wird gegen „<Frage> [Bestätigen] [Abbrechen]" getauscht, Feedback läuft über die Action-Status-Zeile.
+- **Widget pollte nie nach Connect (`0d6f5b6`):** Nach erfolgreichem `app.connect()` wurde das Polling im Desktop-Fall nicht gestartet, wenn der erste `get-status` einen idle/unbekannten State lieferte — spätere Pushes erschienen nie. Jetzt startet Polling in allen Zweigen.
+- **Artefakt-Rebuilds** (`689920a`, `edec2ff`) mit passender Build-ID.
+
 ### 2026-11-05 — merge-app Tool + Auto-Merge
 
 - **`merge-app`-Tool:** Mergt den Work-Branch via `git merge --no-ff` in den Original-Branch. Validiert Preconditions (Status completed, alle Gates passed, noch nicht gemergt). Merge-Commit enthält Zusammenfassung (Findings, Phasen). Setzt `mergeStatus:"merged"` und `mergedAt`.
