@@ -25,7 +25,7 @@ const artifacts = [
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const quitMessage =
-  "Das Dashboard ist vorbereitet. Beende Claude einmal vollständig mit ⌘Q. Die Einrichtung wird abgeschlossen und Claude automatisch wieder geöffnet.";
+  "The dashboard is prepared. Quit Claude completely once with ⌘Q. Setup will finish and Claude will reopen automatically.";
 
 function workflowResume(options) {
   if (options.projectPath === undefined) {
@@ -50,13 +50,13 @@ function workflowResume(options) {
       "Workflow context must be text of at most 2000 characters."
     );
   const prompt = [
-    "Setze die bereits beauftragte UI5-Modernisierung mit dem Plugin-Skill modernize-ui5-app fort.",
-    "Unterbrechung: Phase 0, Dashboard-Einrichtung, vor der Verifikationsmodus-Auswahl und vor allen Modernisierungsänderungen.",
-    "Der Nutzer hat dem Desktop-Dashboard bereits zugestimmt. Die Registrierung wurde nach dem Beenden von Claude abgeschlossen.",
-    "Überspringe die Dashboard-Frage und erneute Einrichtung. Öffne das Dashboard genau einmal mit open-dashboard über den app-registrierten ui5-modernization-dashboard-Server (nicht plugin_). Für spätere Statusprüfungen verwende get-status, für Updates update-status; diese öffnen kein weiteres Widget. Wenn der Server fehlt, melde das und fahre ohne das optionale Dashboard fort.",
-    "Fahre danach mit dem Workflow fort. Frage nach dem Verifikationsmodus nur, sofern er noch nicht festgelegt wurde und kein nicht-interaktiver Auftrag vorliegt. Beachte vorhandene Änderungen im Projekt.",
+    "Continue the already-requested UI5 modernization with the plugin skill modernize-ui5-app.",
+    "Interruption point: Phase 0, dashboard setup, before the verification-mode selection and before any modernization changes.",
+    "The user has already approved the desktop dashboard. Registration was completed after quitting Claude.",
+    "Skip the dashboard question and re-setup. Open the dashboard exactly once with open-dashboard via the app-registered ui5-modernization-dashboard server (not plugin_). For later status checks use get-status, for updates use update-status; these do not open another widget. If the server is missing, report it and continue without the optional dashboard.",
+    "Then continue with the workflow. Ask for the verification mode only if it has not been chosen yet and there is no non-interactive request. Respect existing changes in the project.",
     options.resumeContext
-      ? `Bereits vereinbarte Vorgaben: ${options.resumeContext}`
+      ? `Already agreed constraints: ${options.resumeContext}`
       : "",
   ]
     .filter(Boolean)
@@ -75,7 +75,7 @@ function pendingResult(config, resume) {
     message:
       quitMessage +
       (resume
-        ? " Im neuen Code-Chat ist der Fortsetzungsauftrag vorbereitet. Bestätige gegebenenfalls den Projektordner und klicke einmal auf Senden. Falls der Link nicht übernommen wird, öffne einen Code-Chat im Projekt und füge den mitgelieferten Fortsetzungsauftrag ein."
+        ? " The continuation task is prepared in the new Code chat. Confirm the project folder if needed and click Send once. If the link is not applied, open a Code chat in the project and paste the provided continuation task."
         : ""),
   };
 }
@@ -285,7 +285,7 @@ export function prepareDesktopSetup(options, system = {}) {
     return {
       status: "configured",
       config: location.config,
-      message: "Das Dashboard ist bereits eingerichtet.",
+      message: "The dashboard is already set up.",
     };
   mkdirSync(location.root, { recursive: true });
   const lock = join(location.root, "prepare.lock");

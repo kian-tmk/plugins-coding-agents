@@ -292,11 +292,11 @@ test("bundle changes require another prepared setup while keeping a stable confi
 
 test("workflow continuation survives shutdown and opens the correct project with a draft", async (t) => {
   const f = fixture(t);
-  const projectPath = join(f.options.home, "UI5 Projekt ä & #1");
+  const projectPath = join(f.options.home, "UI5 Project ä & #1");
   mkdirSync(projectPath);
   Object.assign(f.options, {
     projectPath,
-    resumeContext: "Full autonomous; Änderungen nicht committen.",
+    resumeContext: "Full autonomous; do not commit changes.",
   });
   const result = f.prepare();
   const persisted = JSON.parse(readFileSync(join(f.task.stage, "task.json")));

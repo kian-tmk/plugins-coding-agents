@@ -83,12 +83,12 @@ If the prompt contains "Do not ask for confirmation" or similar: skip mode selec
 
 **Use the `AskUserQuestion` tool** (never a plain chat message) to present the mode selection. This renders a structured choice the user can navigate with keyboard.
 
-Question: `"Welchen Verifikationsmodus möchtest du verwenden?"`
+Question: `"Which verification mode would you like to use?"`
 
 Options:
-- **Full autonomous** — Tests laufen automatisch, Agent fixt Fehler selbst (max. 3 Versuche). Nur bei unbehebbaren Fehlern wird nachgefragt. Kann 2–5 Min. pro Phase dauern.
-- **Half autonomous** — Tests laufen automatisch, Agent fixt nichts. Nach jeder Phase Ergebnis + warte auf "continue".
-- **Manual** — Keine Tests, nur Linter-Check. Nach jeder Phase kurze Zusammenfassung + warte auf "continue". Schnellster Modus.
+- **Full autonomous** — Tests run automatically, the agent fixes errors itself (max. 3 attempts). Only unfixable errors prompt a question. Can take 2–5 min per phase.
+- **Half autonomous** — Tests run automatically, the agent fixes nothing. After each phase: result + wait for "continue".
+- **Manual** — No tests, linter check only. After each phase a short summary + wait for "continue". Fastest mode.
 
 Save mode. Do not re-ask between phases.
 
@@ -113,7 +113,7 @@ Integration is **optional and non-blocking** — if declined or unavailable the 
 
 After the prerequisite check and **before** asking for the verification mode, follow this **exact sequence** — do not combine steps, do not skip, do not reorder:
 
-#### Host erkennen (vor Schritt A)
+#### Detect host (before Step A)
 
 ```bash
 # cli → browser dashboard; anything else (e.g. claude-desktop-3p) → native desktop widget
@@ -125,31 +125,31 @@ fi
 echo "DASHBOARD_HOST: $DASHBOARD_HOST"
 ```
 
-#### Dashboard-Frage (AskUserQuestion — Schritt A)
+#### Dashboard question (AskUserQuestion — Step A)
 
 Call `AskUserQuestion` with exactly one question, matching `DASHBOARD_HOST`. Do NOT combine it with the verification mode question or any other question.
 
-- If `DASHBOARD_HOST=cli` — Question: `"Möchtest du das Dashboard mit dem aktuellen Fortschritt im Browser angezeigt bekommen?"`
-  Options: **Ja** — Dashboard im Browser öffnen (empfohlen) / **Nein** — Ohne Dashboard fortfahren
-- If `DASHBOARD_HOST=desktop` — Question: `"Möchtest du das Dashboard mit dem aktuellen Fortschritt als Widget hier im Desktop angezeigt bekommen?"`
-  Options: **Ja** — Dashboard-Widget öffnen (empfohlen) / **Nein** — Ohne Dashboard fortfahren
+- If `DASHBOARD_HOST=cli` — Question: `"Would you like the dashboard shown in the browser with the current progress?"`
+  Options: **Yes** — Open the dashboard in the browser (recommended) / **No** — Continue without the dashboard
+- If `DASHBOARD_HOST=desktop` — Question: `"Would you like the dashboard shown as a widget here in Desktop with the current progress?"`
+  Options: **Yes** — Open the dashboard widget (recommended) / **No** — Continue without the dashboard
 
-→ If **Nein**: set `DASHBOARD=false`, skip Steps 1–4. Go directly to the verification mode question.
+→ If **No**: set `DASHBOARD=false`, skip Steps 1–4. Go directly to the verification mode question.
 
-→ If **Ja**: execute Steps 1–4 (server start + open the matching view), then go directly to the verification mode question.
+→ If **Yes**: execute Steps 1–4 (server start + open the matching view), then go directly to the verification mode question.
 
 #### Step 0D: Desktop app-config registration (Desktop only — before Steps 1–4)
 
-**This step applies ONLY when `DASHBOARD_HOST=desktop` and the user answered Ja.** Skip it entirely for CLI.
+**This step applies ONLY when `DASHBOARD_HOST=desktop` and the user answered Yes.** Skip it entirely for CLI.
 
 The desktop host renders MCP App widgets **only** for servers registered in `claude_desktop_config.json` — plugin-loaded servers can receive tool calls but their widgets are NOT rendered. Before opening the dashboard widget, you MUST ensure the server is registered in the app config.
 
 **Check** whether the dashboard server is already registered by calling the `setup-desktop-dashboard` tool (server `plugin_ui5-modernization_ui5-modernization-dashboard`) with the appropriate profile. The tool inspects the config and returns one of the statuses below. **Branch strictly on the returned `status` field — never on what you expected or intended to happen.** The ⌘Q / restart / continuation-chat flow belongs to **exactly one** status (`waiting-for-quit`) and to no other.
 
-- `status: "configured"` → the server is **already registered and running** — nothing is set up, no restart happens, no continuation chat is opened. Do **NOT** tell the user to quit Claude with ⌘Q. Do **NOT** announce a restart or a Fortsetzungs-Chat. Do **NOT** stop. Simply go straight to Step 4 (`open-dashboard`) and then continue to the verification-mode question. If you catch yourself about to write a ⌘Q / restart message here, you have misread the status — re-read it: `configured` means "carry on in this very session."
+- `status: "configured"` → the server is **already registered and running** — nothing is set up, no restart happens, no continuation chat is opened. Do **NOT** tell the user to quit Claude with ⌘Q. Do **NOT** announce a restart or a continuation chat. Do **NOT** stop. Simply go straight to Step 4 (`open-dashboard`) and then continue to the verification-mode question. If you catch yourself about to write a ⌘Q / restart message here, you have misread the status — re-read it: `configured` means "carry on in this very session."
 - `status: "waiting-for-quit"` → **and only this status** — the registration is prepared but not yet applied. This is the *only* branch where a restart is involved. Tell the user:
 
-  > Das Dashboard wird eingerichtet. Beende Claude einmal vollständig mit **⌘Q**. Die Einrichtung wird abgeschlossen und Claude automatisch wieder geöffnet — mit einem vorbereiteten Fortsetzungs-Chat.
+  > The dashboard is being set up. Quit Claude completely once with **⌘Q**. Setup will finish and Claude will reopen automatically — with a prepared continuation chat.
 
   Then **stop**. Do not proceed with the workflow. The launchd helper will register the server, reopen Claude, and open a continuation chat. The workflow resumes from there.
 
@@ -172,21 +172,21 @@ Call the tool with `profile` set to `$DESKTOP_PROFILE`, and optionally `projectP
 - Do NOT skip this step for Desktop — without app-config registration the widget will not render, even though the tool calls work fine (they go through the plugin server)
 - Do NOT manually edit `claude_desktop_config.json` — the `setup-desktop-dashboard` tool handles this safely (backup, atomic write, SHA verification)
 - Do NOT proceed with the workflow after `waiting-for-quit` — the user must quit Claude first
-- Do NOT send the ⌘Q / restart / Fortsetzungs-Chat message on any status other than `waiting-for-quit`. In particular, after `configured` there is **no** restart and **no** continuation chat — telling the user to quit Claude then is a bug: the user quits, nothing resumes, and the run is orphaned. Read the actual `status` string the tool returned and match the message to it.
+- Do NOT send the ⌘Q / restart / continuation-chat message on any status other than `waiting-for-quit`. In particular, after `configured` there is **no** restart and **no** continuation chat — telling the user to quit Claude then is a bug: the user quits, nothing resumes, and the run is orphaned. Read the actual `status` string the tool returned and match the message to it.
 - If the tool returns `configured`, you can go straight to Step 4 (reset + open-dashboard) — Steps 1–3 are CLI-only — and continue to the verification-mode question **in this same session**, without any restart
 
-#### Steps 1–4: Server starten und Ansicht öffnen
+#### Steps 1–4: Start server and open the view
 
-(See below.) Only run these if the user answered **Ja** to Schritt A. Steps 1–3 are **CLI only** (resolve dir, build, start HTTP server). Desktop skips Steps 1–3 entirely (the server is plugin-loaded + app-config registered via Step 0D) and goes straight to Step 4.
+(See below.) Only run these if the user answered **Yes** to Step A. Steps 1–3 are **CLI only** (resolve dir, build, start HTTP server). Desktop skips Steps 1–3 entirely (the server is plugin-loaded + app-config registered via Step 0D) and goes straight to Step 4.
 
 **IMPORTANT — common mistakes to avoid:**
-- Do NOT bundle Schritt A and the verification mode into one `AskUserQuestion` call
+- Do NOT bundle Step A and the verification mode into one `AskUserQuestion` call
 - Do NOT start the HTTP server / bind :3001 in the desktop case — it is blocked by the sandbox and not needed; status flows through the `update-status` MCP tool
 - Do NOT call `open-dashboard` in the desktop case without first ensuring the server is app-config registered (Step 0D) — the widget will not render otherwise
 - Push status via the `update-status` MCP tool in BOTH hosts — never via curl to :3001
-- The next question after Schritt A (and Steps 0D/1–4, if **Ja**) is always the verification mode — not another dashboard question
+- The next question after Step A (and Steps 0D/1–4, if **Yes**) is always the verification mode — not another dashboard question
 
-If the user answered **Ja** to Schritt A, execute the following steps in order, then proceed to the verification mode question:
+If the user answered **Yes** to Step A, execute the following steps in order, then proceed to the verification mode question:
 
 #### Step 1: Resolve the dashboard directory
 
@@ -197,7 +197,7 @@ if [ ! -f "$DASHBOARD_DIR/main.ts" ]; then
   DASHBOARD_DIR="$HOME/plugins-coding-agents/apps/ui5-modernization-dashboard"
 fi
 if [ ! -f "$DASHBOARD_DIR/main.ts" ]; then
-  echo "⚠ Dashboard-Verzeichnis nicht gefunden — Dashboard wird übersprungen."
+  echo "⚠ Dashboard directory not found — skipping dashboard."
   DASHBOARD=false
 fi
 ```
@@ -206,10 +206,10 @@ fi
 
 ```bash
 if [ "$DASHBOARD" != "false" ] && [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ]; then
-  echo "⏳ Dashboard wird gebaut..."
+  echo "⏳ Building dashboard..."
   (cd "$DASHBOARD_DIR" && npm run build > "${TMPDIR:-/tmp}/ui5-dashboard-build.log" 2>&1)
   if [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ]; then
-    echo "⚠ Dashboard-Build fehlgeschlagen — Log: ${TMPDIR:-/tmp}/ui5-dashboard-build.log"
+    echo "⚠ Dashboard build failed — log: ${TMPDIR:-/tmp}/ui5-dashboard-build.log"
     DASHBOARD=false
   fi
 fi
@@ -222,7 +222,7 @@ The HTTP server on :3001 serves the **browser** view and is started **only in th
 ```bash
 if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
   if curl -s http://localhost:3001/api/status > /dev/null 2>&1; then
-    echo "✅ Dashboard-Server läuft bereits."
+    echo "✅ Dashboard server already running."
     DASHBOARD=true
   else
     node "$DASHBOARD_DIR/dist-server/main.js" > "${TMPDIR:-/tmp}/ui5-dashboard.log" 2>&1 &
@@ -233,7 +233,7 @@ if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
     if curl -s http://localhost:3001/api/status > /dev/null 2>&1; then
       DASHBOARD=true
     else
-      echo "⚠ Dashboard-Server konnte nicht gestartet werden — Log: ${TMPDIR:-/tmp}/ui5-dashboard.log"
+      echo "⚠ Dashboard server could not be started — log: ${TMPDIR:-/tmp}/ui5-dashboard.log"
       DASHBOARD=false
     fi
   fi
@@ -243,15 +243,15 @@ fi
 #### Step 4: Reset state, push "started", THEN open the matching view
 
 Order matters here — it removes the ~2 s window where the freshly opened dashboard
-shows "keine Modernisierung" before the first status arrives. Do these three steps
+shows "no modernization running" before the first status arrives. Do these three steps
 **in this exact order**:
 
 1. **Reset** the state via the **`reset-status` MCP tool** (works in both hosts — no HTTP/port needed): call `reset-status` on the `ui5-modernization-dashboard` server once, so any previous run is cleared.
 
-2. **Push the "started" state FIRST**, before the view is opened, so the state file already says `stage:"started"` when the browser/widget loads and its very first fetch shows "Modernisierung gestartet" — no idle flash:
+2. **Push the "started" state FIRST**, before the view is opened, so the state file already says `stage:"started"` when the browser/widget loads and its very first fetch shows "Modernization started" — no idle flash:
 
 ```bash
-# stage:"started" drives the "Modernisierung gestartet" screen. No phases yet.
+# stage:"started" drives the "Modernization started" screen. No phases yet.
 push_status "{\"status\":\"running\",\"stage\":\"started\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 ```
 
@@ -261,10 +261,10 @@ Call the `update-status` MCP tool with that payload.
 
 ```bash
 if [ "$DASHBOARD" = "true" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
-  echo "✅ Dashboard gestartet: http://localhost:3001"
+  echo "✅ Dashboard started: http://localhost:3001"
   open http://localhost:3001 2>/dev/null || true
 elif [ "$DASHBOARD" = "true" ]; then
-  echo "✅ Dashboard-Widget wird im Desktop geöffnet."
+  echo "✅ Dashboard widget will open in Desktop."
 fi
 ```
 
@@ -305,8 +305,8 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 
 | When | Fields to include |
 |---|---|
-| Dashboard opened (before linter) | `status:"running"`, `stage:"started"`, `project`, `projectPath`, `startedAt` — the "Modernisierung gestartet" screen |
-| Just before the linter baseline runs | `status:"running"`, `stage:"linting"`, `currentActivity:"Linter-Analyse läuft…"` — the "Linter läuft" screen |
+| Dashboard opened (before linter) | `status:"running"`, `stage:"started"`, `project`, `projectPath`, `startedAt` — the "Modernization started" screen |
+| Just before the linter baseline runs | `status:"running"`, `stage:"linting"`, `currentActivity:"Linter analysis running…"` — the "Linter running" screen |
 | After linter baseline (Phase 0) | `status:"running"`, `project`, `projectPath`, `ui5Version`, `linterBaseline`, `totalFindings`, `phases` (all pending — use exact schema below), `startedAt` (omit `stage` — the `phases` array now drives the live view) |
 | Each phase starts | `currentPhase`, phase N `status:"running"`, `phaseStartedAt`, `currentActivity` |
 | Each sub-agent launched | `currentActivity` describing what is being fixed (e.g. `"Fixing manifest.json — no-outdated-manifest-version"`) |
@@ -323,7 +323,7 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 **Stopping early (user asks to stop/abort mid-run):** This is a specific, mandatory procedure — do NOT just end your turn, and do NOT call `reset-status` (that wipes the dashboard to idle and loses the stop context). Do exactly this, in order:
 
 1. Stop any running sub-agent / background work first.
-2. Call the **`stop-status`** MCP tool with a short `reason` (e.g. `{"reason":"Durch Nutzer gestoppt"}`). This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
+2. Call the **`stop-status`** MCP tool with a short `reason` (e.g. `{"reason":"Stopped by user"}`). This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
 3. Tell the user the run is stopped, which branch the work is on (`workBranch`), and that they can reset to `originalBranch` from the dashboard or by asking you.
 
 Never push `status:"completed"` or `status:"idle"` for a user stop. It is fire-and-forget like the other pushes.
@@ -384,10 +384,10 @@ Not a git repo (or `$PROJECT_PATH` unknown) → leave both empty; the dashboard 
 
 ### Step 1.1: Initial Analysis
 
-**Before running the linter**, push the **"Linter läuft"** state so the dashboard shows the linter screen while the (potentially slow) baseline analysis runs — the baseline push below only arrives *after* the linter finishes:
+**Before running the linter**, push the **"Linter running"** state so the dashboard shows the linter screen while the (potentially slow) baseline analysis runs — the baseline push below only arrives *after* the linter finishes:
 
 ```bash
-push_status "{\"status\":\"running\",\"stage\":\"linting\",\"currentActivity\":\"Linter-Analyse läuft…\"}"
+push_status "{\"status\":\"running\",\"stage\":\"linting\",\"currentActivity\":\"Linter analysis running…\"}"
 ```
 
 Call `update-status` with that payload, then run the linter:
@@ -787,12 +787,12 @@ for p in phases:
         p['gateStatus'] = 'running'
 print(json.dumps(phases))
 ")
-push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Verification gate — tests laufen...\",\"phases\":$PHASES_JSON}"
+push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Verification gate — tests running...\",\"phases\":$PHASES_JSON}"
 ```
 
 After the gate completes, push the result — set `gateStatus` to `"passed"` or `"failed"` (leave `phase.status` unchanged). Also fill in `gateDurationSeconds` (elapsed since `$GATE_START`) and, when the test runner reports counts, `gateTestsPassed` / `gateTestsTotal`. These drive the gate line in the completed-screen phase summary (e.g. `Gate: 18/18 Tests passed ✅ 3m 04s`). Set `$GATE_PASSED` / `$GATE_TOTAL` from the sub-agent's test summary (`N passed`, `N+M+skipped` total); if the runner reports no counts, leave them unset and the dashboard shows just `Gate passed/failed`.
 
-**When not every test is green, add a short `gateNote` explaining why.** The dashboard colours the gate line by outcome: all green → green ✅; `gateStatus:"passed"` but `gateTestsPassed < gateTestsTotal` → amber ⚠ (the gate was let through, but the user deserves to know which tests were skipped/tolerated and why); `failed` → red ❌. Whenever `gateTestsPassed < gateTestsTotal` (amber or red), set `$GATE_NOTE` to one short sentence — e.g. `"1 Test übersprungen: opaTests/Worklist nicht phasenbezogen"` or `"3 Tests fehlgeschlagen nach IllustratedMessage-Migration"`. When all tests pass, leave `$GATE_NOTE` empty:
+**When not every test is green, add a short `gateNote` explaining why.** The dashboard colours the gate line by outcome: all green → green ✅; `gateStatus:"passed"` but `gateTestsPassed < gateTestsTotal` → amber ⚠ (the gate was let through, but the user deserves to know which tests were skipped/tolerated and why); `failed` → red ❌. Whenever `gateTestsPassed < gateTestsTotal` (amber or red), set `$GATE_NOTE` to one short sentence — e.g. `"1 test skipped: opaTests/Worklist not phase-related"` or `"3 tests failed after IllustratedMessage migration"`. When all tests pass, leave `$GATE_NOTE` empty:
 
 ```bash
 GATE_DURATION=$(( $(date +%s) - GATE_START ))
@@ -810,7 +810,7 @@ for p in phases:
         if os.environ.get('GATE_NOTE'): p['gateNote'] = os.environ['GATE_NOTE']
 print(json.dumps(phases))
 ")
-push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests bestanden ✅\",\"phases\":$PHASES_JSON}"
+push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests passed ✅\",\"phases\":$PHASES_JSON}"
 
 # On fail (after retries exhausted):
 PHASES_JSON=$(echo "$PHASES_JSON" | GATE_DURATION=$GATE_DURATION GATE_PASSED="$GATE_PASSED" GATE_TOTAL="$GATE_TOTAL" GATE_NOTE="$GATE_NOTE" python3 -c "
@@ -825,7 +825,7 @@ for p in phases:
         if os.environ.get('GATE_NOTE'): p['gateNote'] = os.environ['GATE_NOTE']
 print(json.dumps(phases))
 ")
-push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests fehlgeschlagen ❌ — warte auf Nutzer\",\"phases\":$PHASES_JSON}"
+push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentActivity\":\"Phase $CURRENT_PHASE: Tests failed ❌ — waiting for user\",\"phases\":$PHASES_JSON}"
 ```
 
 ### Full autonomous

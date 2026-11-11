@@ -108,7 +108,7 @@ test("early-run stage is tracked then cleared once phases arrive", async (t) => 
 
   // "started" (dashboard opened) and "linting" (baseline running) are distinct,
   // explicit sub-states before any phases — this is what lets the dashboard tell
-  // "Modernisierung gestartet" from "Linter läuft".
+  // "Modernization started" from "Linter running".
   await client.callTool({ name: "update-status", arguments: { status: "running", stage: "started", project: "x", projectPath: "/x" } });
   assert.equal((await get()).stage, "started");
   await client.callTool({ name: "update-status", arguments: { status: "running", stage: "linting" } });
@@ -143,12 +143,12 @@ test("stop-status marks the run stopped while preserving progress", async (t) =>
     },
   });
 
-  const stopped = await client.callTool({ name: "stop-status", arguments: { reason: "Nutzer hat gestoppt" } });
+  const stopped = await client.callTool({ name: "stop-status", arguments: { reason: "User stopped" } });
   assert.equal(stopped.isError, undefined);
 
   const state = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
   assert.equal(state.status, "stopped");
-  assert.equal(state.stopReason, "Nutzer hat gestoppt");
+  assert.equal(state.stopReason, "User stopped");
   assert.ok(state.stoppedAt, "stoppedAt is set by the server");
   // Progress is preserved, not wiped like reset-status.
   assert.equal(state.findingsRemaining, 25);

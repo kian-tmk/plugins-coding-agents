@@ -61125,7 +61125,7 @@ var artifacts = [
   "desktop-setup-worker.mjs"
 ];
 var object2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var quitMessage = "Das Dashboard ist vorbereitet. Beende Claude einmal vollst\xE4ndig mit \u2318Q. Die Einrichtung wird abgeschlossen und Claude automatisch wieder ge\xF6ffnet.";
+var quitMessage = "The dashboard is prepared. Quit Claude completely once with \u2318Q. Setup will finish and Claude will reopen automatically.";
 function workflowResume(options) {
   if (options.projectPath === void 0) {
     if (options.resumeContext !== void 0)
@@ -61141,12 +61141,12 @@ function workflowResume(options) {
       "Workflow context must be text of at most 2000 characters."
     );
   const prompt = [
-    "Setze die bereits beauftragte UI5-Modernisierung mit dem Plugin-Skill modernize-ui5-app fort.",
-    "Unterbrechung: Phase 0, Dashboard-Einrichtung, vor der Verifikationsmodus-Auswahl und vor allen Modernisierungs\xE4nderungen.",
-    "Der Nutzer hat dem Desktop-Dashboard bereits zugestimmt. Die Registrierung wurde nach dem Beenden von Claude abgeschlossen.",
-    "\xDCberspringe die Dashboard-Frage und erneute Einrichtung. \xD6ffne das Dashboard genau einmal mit open-dashboard \xFCber den app-registrierten ui5-modernization-dashboard-Server (nicht plugin_). F\xFCr sp\xE4tere Statuspr\xFCfungen verwende get-status, f\xFCr Updates update-status; diese \xF6ffnen kein weiteres Widget. Wenn der Server fehlt, melde das und fahre ohne das optionale Dashboard fort.",
-    "Fahre danach mit dem Workflow fort. Frage nach dem Verifikationsmodus nur, sofern er noch nicht festgelegt wurde und kein nicht-interaktiver Auftrag vorliegt. Beachte vorhandene \xC4nderungen im Projekt.",
-    options.resumeContext ? `Bereits vereinbarte Vorgaben: ${options.resumeContext}` : ""
+    "Continue the already-requested UI5 modernization with the plugin skill modernize-ui5-app.",
+    "Interruption point: Phase 0, dashboard setup, before the verification-mode selection and before any modernization changes.",
+    "The user has already approved the desktop dashboard. Registration was completed after quitting Claude.",
+    "Skip the dashboard question and re-setup. Open the dashboard exactly once with open-dashboard via the app-registered ui5-modernization-dashboard server (not plugin_). For later status checks use get-status, for updates use update-status; these do not open another widget. If the server is missing, report it and continue without the optional dashboard.",
+    "Then continue with the workflow. Ask for the verification mode only if it has not been chosen yet and there is no non-interactive request. Respect existing changes in the project.",
+    options.resumeContext ? `Already agreed constraints: ${options.resumeContext}` : ""
   ].filter(Boolean).join("\n");
   const url2 = new URL("claude://code/new");
   url2.searchParams.set("folder", options.projectPath);
@@ -61158,7 +61158,7 @@ function pendingResult(config2, resume) {
     status: "waiting-for-quit",
     config: config2,
     ...resume ? { resume } : {},
-    message: quitMessage + (resume ? " Im neuen Code-Chat ist der Fortsetzungsauftrag vorbereitet. Best\xE4tige gegebenenfalls den Projektordner und klicke einmal auf Senden. Falls der Link nicht \xFCbernommen wird, \xF6ffne einen Code-Chat im Projekt und f\xFCge den mitgelieferten Fortsetzungsauftrag ein." : "")
+    message: quitMessage + (resume ? " The continuation task is prepared in the new Code chat. Confirm the project folder if needed and click Send once. If the link is not applied, open a Code chat in the project and paste the provided continuation task." : "")
   };
 }
 function readJson(file2, fallback) {
@@ -61336,7 +61336,7 @@ function prepareDesktopSetup(options, system = {}) {
     return {
       status: "configured",
       config: location.config,
-      message: "Das Dashboard ist bereits eingerichtet."
+      message: "The dashboard is already set up."
     };
   mkdirSync(location.root, { recursive: true });
   const lock = join(location.root, "prepare.lock");
@@ -61566,7 +61566,7 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "745adae \xB7 2026-11-10T15:17" : "dev";
+var SERVER_BUILD = true ? "b6572b1 \xB7 2026-11-11T09:59" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";

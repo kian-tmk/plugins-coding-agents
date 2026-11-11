@@ -469,7 +469,7 @@ function renderDashboard(state: ModernizationState) {
   const silentMs = lastActive !== null ? Date.now() - lastActive : null;
   const isWaiting = isRunning && silentMs !== null && silentMs > 90_000;
   const silentMin = silentMs !== null ? Math.round(silentMs / 60_000) : 0;
-  const waitingText = silentMin >= 2 ? `Waiting... · vor ${silentMin}m` : "Waiting...";
+  const waitingText = silentMin >= 2 ? `Waiting... · ${silentMin}m ago` : "Waiting...";
 
   const statusEl = document.getElementById("phase-status");
   const statusText = document.getElementById("status-text");
@@ -597,7 +597,7 @@ function renderCompleted(state: ModernizationState) {
   const headerIcon = document.getElementById("completed-icon");
   if (headerIcon) headerIcon.setAttribute("name", stopped ? "process" : "sys-enter-2");
   if (stopped) {
-    const reason = state.stopReason?.trim() || "Durch Nutzer gestoppt";
+    const reason = state.stopReason?.trim() || "Stopped by user";
     setText("completed-sub", `${reason} — ${remaining} findings remaining, ${fixed} resolved in ${elapsed}`);
   } else {
     setText("completed-sub", `${baseline} findings resolved across ${commits} commits in ${elapsed}`);
@@ -785,9 +785,9 @@ function renderMergeStatus(state: ModernizationState, justMerged = false, force 
     if (hasDeferred) {
       confirmInline({
         container: mergeEl,
-        question: `${state.deferredIssues!.length} ungelöste Issue${state.deferredIssues!.length !== 1 ? "s" : ""} — `
-          + `trotzdem nach <code>${escapeHtml(state.originalBranch!)}</code> mergen?`,
-        confirmLabel: `Trotzdem mergen`,
+        question: `${state.deferredIssues!.length} unresolved issue${state.deferredIssues!.length !== 1 ? "s" : ""} — `
+          + `merge into <code>${escapeHtml(state.originalBranch!)}</code> anyway?`,
+        confirmLabel: `Merge anyway`,
         confirmDesign: "Emphasized",
         onConfirm: () => mergeApp(state),
         rewire: () => renderMergeStatus(state, false, true),
@@ -819,9 +819,9 @@ function setActionStatus(kind: "working" | "ok" | "error", text: string) {
 // Inline confirmation for destructive actions. window.confirm/alert are blocked
 // inside the sandboxed Desktop MCP-app iframe (they return false with no dialog),
 // which is why the reset/merge buttons appeared dead there. Instead we swap the
-// action button for a "<question> [confirm] [Abbrechen]" row inside its own
+// action button for a "<question> [confirm] [Cancel]" row inside its own
 // container. Confirm runs onConfirm (which takes over feedback via the action
-// status line); Abbrechen restores the original button by calling rewire().
+// status line); Cancel restores the original button by calling rewire().
 function confirmInline(opts: {
   container: HTMLElement;
   question: string;        // may contain <code>…</code> for branch names
@@ -836,7 +836,7 @@ function confirmInline(opts: {
       <span class="confirm-q">${question}</span>
       <div class="confirm-actions">
         <ui5-button id="confirm-yes" design="${confirmDesign}">${escapeHtml(confirmLabel)}</ui5-button>
-        <ui5-button id="confirm-cancel" design="Transparent">Abbrechen</ui5-button>
+        <ui5-button id="confirm-cancel" design="Transparent">Cancel</ui5-button>
       </div>
     </div>`;
   document.getElementById("confirm-yes")?.addEventListener("click", () => onConfirm());
@@ -875,8 +875,8 @@ function renderResetButton(state: ModernizationState, force = false) {
   document.getElementById("btn-reset-app")?.addEventListener("click", () => {
     confirmInline({
       container: resetEl,
-      question: `App auf den alten Stand zurücksetzen? Das Repository wechselt zurück auf `
-        + `<code>${escapeHtml(state.originalBranch!)}</code>; deine Arbeit bleibt als Backup auf `
+      question: `Reset the app to its original state? The repository switches back to `
+        + `<code>${escapeHtml(state.originalBranch!)}</code>; your work stays as a backup on `
         + `<code>${escapeHtml(state.workBranch!)}</code>.`,
       confirmLabel: resetLabel,
       onConfirm: () => resetApp(state),
@@ -1023,7 +1023,7 @@ function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
   const hint = document.getElementById("idle-hint");
   if (hint) hint.style.display = (opts.hint ?? variant === "neutral") ? "" : "none";
 
-  // Optional action button (e.g. "Zurücksetzen auf main").
+  // Optional action button (e.g. "Reset to main").
   const actionEl = document.getElementById("idle-action");
   if (actionEl) {
     actionEl.innerHTML = "";
@@ -1045,8 +1045,8 @@ function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
 // idle, no run active). Illustration NoTasks, blue detail-view icon, no button.
 function resetIdleToReady(): void {
   setIdleMessage({
-    title: "Keine laufende Modernisierung",
-    subtitle: "Aktuell läuft keine Modernisierung. Starte sie über einen Coding Agent mit /modernize-ui5-app.",
+    title: "No modernization running",
+    subtitle: "No modernization is currently running. Start one from a coding agent with /modernize-ui5-app.",
     variant: "neutral",
     illustration: "NoTasks",
     headerIcon: "detail-view",
@@ -1074,8 +1074,8 @@ function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>)
   if (outcome.kind === "merged-cleared") {
     // State 5 — Merge success. Illustration KeyTask, combine icon (blue).
     return {
-      title: "Erfolgreich gemerged und aufgeräumt",
-      subtitle: `„${outcome.workBranch}“ wurde nach „${outcome.originalBranch}“ gemerged. Das Dashboard ist zurückgesetzt.`,
+      title: "Successfully merged and cleaned up",
+      subtitle: `“${outcome.workBranch}” was merged into “${outcome.originalBranch}”. The dashboard has been reset.`,
       variant: "success",
       illustration: "KeyTask",
       headerIcon: "combine",
@@ -1085,8 +1085,8 @@ function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>)
   }
   // State 4 — Reset success. Illustration ReloadScreen, sys-enter-2 icon (green).
   return {
-    title: "App ist wieder auf dem alten Stand",
-    subtitle: `Zurückgesetzt auf „${outcome.originalBranch}“. Deine Modernisierung liegt als Backup auf dem Branch „${outcome.workBranch}“.`,
+    title: "App is back to its original state",
+    subtitle: `Reset to “${outcome.originalBranch}”. Your modernization is kept as a backup on branch “${outcome.workBranch}”.`,
     variant: "success",
     illustration: "ReloadScreen",
     headerIcon: "sys-enter-2",
@@ -1105,8 +1105,8 @@ function renderIdle(state: ModernizationState | null): void {
   // which is the client-only "can't reach the server" case.
   if (state && ((state.status as string) === "error" || (state as any).error)) {
     setIdleMessage({
-      title: "Es ist ein Fehler aufgetreten",
-      subtitle: "Läuft der Coding Agent noch korrekt? Wenn ja, starte das Dashboard neu.",
+      title: "An error occurred",
+      subtitle: "Is the coding agent still running correctly? If so, restart the dashboard.",
       variant: "error",
       illustration: "NoData",
       headerIcon: "error",
@@ -1131,8 +1131,8 @@ function renderIdle(state: ModernizationState | null): void {
   const paused = state && ((state.status as string) === "paused" || (state as any).paused === true);
   if (paused) {
     setIdleMessage({
-      title: "Pausiert",
-      subtitle: "Der Modernisierungslauf ist pausiert.",
+      title: "Paused",
+      subtitle: "The modernization run is paused.",
       variant: "warning",
       illustration: "BeforeSearch",
       headerIcon: "alert",
@@ -1145,19 +1145,19 @@ function renderIdle(state: ModernizationState | null): void {
   const isStale = !!(state && state.status === "running" && state.startedAt
     && (Date.now() - new Date(state.startedAt).getTime()) > 24 * 60 * 60 * 1000);
   if (isStale && state) {
-    const started = state.startedAt ? new Date(state.startedAt).toLocaleDateString("de-DE") : "unbekannt";
+    const started = state.startedAt ? new Date(state.startedAt).toLocaleDateString("en-US") : "unknown";
     const canReset = !!(state.workBranch && state.originalBranch);
     setIdleMessage({
-      title: `Lauf vom ${started} unterbrochen`,
+      title: `Run from ${started} interrupted`,
       subtitle: canReset
-        ? `Der Lauf hängt auf „${state.workBranch}“. Setze auf „${state.originalBranch}“ zurück, um aufzuräumen — oder starte den Agenten neu, um fortzusetzen.`
-        : "Der Lauf scheint unterbrochen. Kein Backup-Branch hinterlegt.",
+        ? `The run is stuck on “${state.workBranch}”. Reset to “${state.originalBranch}” to clean up — or restart the agent to continue.`
+        : "The run appears interrupted. No backup branch recorded.",
       variant: "warning",
       illustration: "BeforeSearch",
       headerIcon: "alert",
       hint: false,
       action: canReset
-        ? { label: `Zurücksetzen auf ${state.originalBranch}`, icon: "history", onClick: () => resetApp(state) }
+        ? { label: `Reset to ${state.originalBranch}`, icon: "history", onClick: () => resetApp(state) }
         : undefined,
     });
     return;
@@ -1174,8 +1174,8 @@ function renderIdle(state: ModernizationState | null): void {
     if (state.stage === "linting") {
       // State 2 — Linter running.
       setIdleMessage({
-        title: "Linter-Analyse läuft…",
-        subtitle: "Der UI5 Linter sucht nach allen Deprecations in der App.",
+        title: "Linter analysis running…",
+        subtitle: "The UI5 linter is scanning the app for all deprecations.",
         variant: "neutral",
         illustration: "tnt/Settings",
         headerIcon: "developer-settings",
@@ -1185,8 +1185,8 @@ function renderIdle(state: ModernizationState | null): void {
     } else {
       // State 1 — Modernization started (stage:"started", or running-without-stage).
       setIdleMessage({
-        title: "Modernisierung gestartet",
-        subtitle: "Der Agent hat den Modernisierungs-Workflow gestartet. Der Lauf wird hier angezeigt.",
+        title: "Modernization started",
+        subtitle: "The agent has started the modernization workflow. The run will appear here.",
         variant: "neutral",
         illustration: "tnt/Settings",
         headerIcon: "process",
@@ -1438,8 +1438,8 @@ function setConnectionStatus(state: "ok" | "lost" | "reconnecting") {
   if (state === "ok") { el.textContent = ""; el.className = "conn-status"; return; }
   el.className = `conn-status conn-${state}`;
   el.textContent = state === "lost"
-    ? "⚠ Verbindung zum Dashboard-Server verloren"
-    : "… verbinde neu";
+    ? "⚠ Lost connection to the dashboard server"
+    : "… reconnecting";
 }
 
 // Desktop only: the MCP bridge does not reconnect itself. Re-run app.connect()
@@ -1470,11 +1470,11 @@ async function poll() {
         applyState(state);
       } else if (!screenIdle.classList.contains("hidden")) {
         // REST stopped answering while the idle screen is up — surface it rather
-        // than leaving a stale "Bereit". A running/completed screen is left intact
+        // than leaving a stale "Ready". A running/completed screen is left intact
         // (a single dropped poll shouldn't tear it down); the next good poll heals.
         setIdleOutcome({
-          title: "Dashboard-Server nicht erreichbar",
-          subtitle: "Verbindung zum Status unterbrochen. Es wird erneut versucht…",
+          title: "Dashboard server unreachable",
+          subtitle: "Connection to the status was interrupted. Retrying…",
           variant: "error",
           illustration: "NoData",
           headerIcon: "error",
@@ -1583,11 +1583,11 @@ app.connect().then(async () => {
     startPolling();
   } else {
     // Neither MCP nor REST answered — the server is genuinely unreachable. Say so
-    // instead of a blank "Bereit" screen. Polling keeps retrying; a later success
+    // instead of a blank "Ready" screen. Polling keeps retrying; a later success
     // clears this via a fresh state. (Desktop uses the conn-status strip instead.)
     setIdleOutcome({
-      title: "Dashboard-Server nicht erreichbar",
-      subtitle: "Der Status konnte nicht geladen werden. Läuft der Dashboard-Server? Es wird erneut versucht…",
+      title: "Dashboard server unreachable",
+      subtitle: "The status could not be loaded. Is the dashboard server running? Retrying…",
       variant: "error",
       illustration: "NoData",
       headerIcon: "error",
