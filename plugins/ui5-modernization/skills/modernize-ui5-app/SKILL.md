@@ -240,9 +240,24 @@ if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
 fi
 ```
 
-#### Step 4: Reset state and open the matching view
+#### Step 4: Reset state, push "started", THEN open the matching view
 
-Reset the state via the **`reset-status` MCP tool** (works in both hosts — no HTTP/port needed): call the `reset-status` tool of the `ui5-modernization-dashboard` server once here, so the dashboard starts on the idle screen.
+Order matters here — it removes the ~2 s window where the freshly opened dashboard
+shows "keine Modernisierung" before the first status arrives. Do these three steps
+**in this exact order**:
+
+1. **Reset** the state via the **`reset-status` MCP tool** (works in both hosts — no HTTP/port needed): call `reset-status` on the `ui5-modernization-dashboard` server once, so any previous run is cleared.
+
+2. **Push the "started" state FIRST**, before the view is opened, so the state file already says `stage:"started"` when the browser/widget loads and its very first fetch shows "Modernisierung gestartet" — no idle flash:
+
+```bash
+# stage:"started" drives the "Modernisierung gestartet" screen. No phases yet.
+push_status "{\"status\":\"running\",\"stage\":\"started\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+```
+
+Call the `update-status` MCP tool with that payload.
+
+3. **Only now open the view:**
 
 ```bash
 if [ "$DASHBOARD" = "true" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
@@ -253,9 +268,7 @@ elif [ "$DASHBOARD" = "true" ]; then
 fi
 ```
 
-**Both hosts:** after resetting, deliver the first state via the `update-status` MCP tool (see the push convention below).
-
-**Desktop only (`DASHBOARD_HOST=desktop`):** open the native widget by calling the **`open-dashboard`** tool on the **app-config registered** `ui5-modernization-dashboard` server (NOT the `plugin_ui5-modernization_ui5-modernization-dashboard` server — that is the plugin-loaded instance whose widgets are not rendered by the host). The `open-dashboard` tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline. For subsequent status checks, use `get-status` instead — it reads without opening another widget. (The CLI case needs no such call — the browser tab is the view.)
+**Desktop only (`DASHBOARD_HOST=desktop`):** open the native widget by calling the **`open-dashboard`** tool on the **app-config registered** `ui5-modernization-dashboard` server (NOT the `plugin_ui5-modernization_ui5-modernization-dashboard` server — that is the plugin-loaded instance whose widgets are not rendered by the host). The `open-dashboard` tool carries the `_meta.ui` resource, so the host renders the dashboard panel inline — and because the "started" state was already pushed in step 2, it renders populated. For subsequent status checks, use `get-status` instead — it reads without opening another widget. (The CLI case needs no such call — the browser tab is the view.)
 
 > **Why two servers?** The plugin loads its own instance (`plugin_ui5-modernization_...`) — it handles tool calls but its widgets don't render. Step 0D registers a second instance (`ui5-modernization-dashboard`) in the app config — that one renders widgets. Both share the same state file (`~/.ui5-modernization-dashboard/state.json`), so updates via either server are visible in the widget. Use the app-config server name for `open-dashboard`; use either server for `update-status`/`get-status`.
 
@@ -292,7 +305,9 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 
 | When | Fields to include |
 |---|---|
-| After linter baseline (Phase 0) | `status:"running"`, `project`, `projectPath`, `ui5Version`, `linterBaseline`, `totalFindings`, `phases` (all pending — use exact schema below), `startedAt` |
+| Dashboard opened (before linter) | `status:"running"`, `stage:"started"`, `project`, `projectPath`, `startedAt` — the "Modernisierung gestartet" screen |
+| Just before the linter baseline runs | `status:"running"`, `stage:"linting"`, `currentActivity:"Linter-Analyse läuft…"` — the "Linter läuft" screen |
+| After linter baseline (Phase 0) | `status:"running"`, `project`, `projectPath`, `ui5Version`, `linterBaseline`, `totalFindings`, `phases` (all pending — use exact schema below), `startedAt` (omit `stage` — the `phases` array now drives the live view) |
 | Each phase starts | `currentPhase`, phase N `status:"running"`, `phaseStartedAt`, `currentActivity` |
 | Each sub-agent launched | `currentActivity` describing what is being fixed (e.g. `"Fixing manifest.json — no-outdated-manifest-version"`) |
 | Each sub-agent returns | `currentActivity` with result summary (e.g. `"manifest.json fixed — 3 findings resolved"`) |
@@ -369,6 +384,14 @@ Not a git repo (or `$PROJECT_PATH` unknown) → leave both empty; the dashboard 
 
 ### Step 1.1: Initial Analysis
 
+**Before running the linter**, push the **"Linter läuft"** state so the dashboard shows the linter screen while the (potentially slow) baseline analysis runs — the baseline push below only arrives *after* the linter finishes:
+
+```bash
+push_status "{\"status\":\"running\",\"stage\":\"linting\",\"currentActivity\":\"Linter-Analyse läuft…\"}"
+```
+
+Call `update-status` with that payload, then run the linter:
+
 ```bash
 npx @ui5/linter --details 2>&1 | tee "${TMPDIR:-/tmp}/ui5-linter-baseline.txt"
 grep -c " error \| warning " "${TMPDIR:-/tmp}/ui5-linter-baseline.txt" || echo "0"
@@ -376,7 +399,7 @@ grep -c " error \| warning " "${TMPDIR:-/tmp}/ui5-linter-baseline.txt" || echo "
 
 Parse: total errors/warnings, grouped by rule ID and file. Store for final comparison.
 
-Push initial dashboard state after parsing the baseline. Read the two branch names back from the file written in Step 1.0 (they are not in this shell's variables yet):
+Push initial dashboard state after parsing the baseline. This push carries the `phases` array, which moves the dashboard from the linter screen to the live phase view. Read the two branch names back from the file written in Step 1.0 (they are not in this shell's variables yet):
 
 ```bash
 ORIGINAL_BRANCH=$(sed -n '1p' "${TMPDIR:-/tmp}/ui5-modernization-branches.txt" 2>/dev/null)

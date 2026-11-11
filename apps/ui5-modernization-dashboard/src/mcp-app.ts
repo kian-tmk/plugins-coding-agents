@@ -156,6 +156,7 @@ interface ModernizationState {
   lastGitActivityAt: string | null;
   mergedAt: string | null;
   mergeStatus: "pending" | "merged" | "skipped" | null;
+  stage: "started" | "linting" | null;
   lastOutcome: {
     kind: "reset" | "merged-cleared";
     originalBranch: string | null;
@@ -1162,12 +1163,15 @@ function renderIdle(state: ModernizationState | null): void {
     return;
   }
 
-  // A running state before any phases exist splits into two early screens:
+  // Early-run screens before the phase view exists. The skill sets an explicit
+  // `stage` so this is unambiguous — no guessing from currentActivity. `started`
+  // is pushed with open-dashboard, `linting` right before the baseline linter runs;
+  // both arrive before any phases, and `stage` is dropped once phases exist. A
+  // running state with no phases and no stage (older skill) still means a run is
+  // under way, so default to the "started" screen rather than the idle-0 screen.
   if (state && state.status === "running"
       && (!Array.isArray(state.phases) || state.phases.length === 0)) {
-    const activity = (state.currentActivity ?? "").toLowerCase();
-    const linterRunning = activity.includes("linter") || activity.includes("lint");
-    if (linterRunning) {
+    if (state.stage === "linting") {
       // State 2 — Linter running.
       setIdleMessage({
         title: "Linter-Analyse läuft…",
@@ -1179,7 +1183,7 @@ function renderIdle(state: ModernizationState | null): void {
         hint: false,
       });
     } else {
-      // State 1 — Modernization just started (first running tick, before the linter).
+      // State 1 — Modernization started (stage:"started", or running-without-stage).
       setIdleMessage({
         title: "Modernisierung gestartet",
         subtitle: "Der Agent hat den Modernisierungs-Workflow gestartet. Der Lauf wird hier angezeigt.",
@@ -1225,6 +1229,10 @@ function normalizePhase(p: Record<string, unknown>, index: number): PhaseState {
 }
 
 let lastStatus: string | null = null;
+// Handle for the delayed "show completed screen" transition. Must be cancellable:
+// if a new run starts during the 1.5s delay, the stale timeout would otherwise fire
+// and slam the old completed screen back over the fresh "started" screen.
+let completedTransition: ReturnType<typeof setTimeout> | null = null;
 
 // Show the UI build, and warn when the server runs a different build — the
 // classic "Desktop loaded a stale runtime copy" symptom.
@@ -1245,6 +1253,14 @@ function applyState(raw: unknown) {
   const state = raw as ModernizationState;
 
   renderBuildInfo(state.serverBuild ?? null);
+
+  // Cancel a pending "switch to completed screen" transition whenever the incoming
+  // state is no longer completed — otherwise a new run that starts during the 1.5s
+  // delay gets overwritten when the stale timeout fires (old dashboard "sticks").
+  if (completedTransition && state.status !== "completed") {
+    clearTimeout(completedTransition);
+    completedTransition = null;
+  }
 
   // A fresh, valid state means the server is reachable again — drop a stale
   // "unreachable" error outcome. Success outcomes (reset/merge) are kept; they
@@ -1289,11 +1305,15 @@ function applyState(raw: unknown) {
     }
   } else if (state.status === "completed") {
     stopLiveTimer();
-    // Show dashboard briefly, then switch to completed
-    showScreen("dashboard");
-    renderDashboard(state);
-    if (lastStatus !== "completed") {
-      setTimeout(() => {
+    // The brief "dashboard → completed" transition is only a nice touch when a live
+    // run finishes (lastStatus was "running"). On a cold load / reload (lastStatus
+    // null or already completed) jump straight to the completed screen — no 1.5s of
+    // empty dashboard shell.
+    if (lastStatus === "running") {
+      showScreen("dashboard");
+      renderDashboard(state);
+      completedTransition = setTimeout(() => {
+        completedTransition = null;
         showScreen("completed");
         renderCompleted(state);
       }, 1500);
@@ -1504,13 +1524,10 @@ app.ontoolresult = (result) => {
 // the user stare at idle while the MCP handshake is still in flight.
 fetchRestStatus().then((state) => {
   if (document.body.className) return; // connect() already resolved, don't interfere
-  if (state?.status === "running") {
-    showScreen("dashboard");
-    renderDashboard(state);
-  } else if (state?.status === "completed" || state?.status === "stopped") {
-    showScreen("completed");
-    renderCompleted(state);
-  }
+  // Route through applyState so the early-run screens (started / linting / no-phases)
+  // are chosen correctly — rendering the dashboard shell directly here showed an
+  // empty "PHASE — OF 0" on reload during the pre-phase stage.
+  if (state) applyState(state);
 });
 
 // Try MCP app connection first; fall back to standalone REST polling
@@ -1534,18 +1551,9 @@ app.connect().then(async () => {
       { signal: AbortSignal.timeout(5000) },
     );
     const state = result.structuredContent as ModernizationState | undefined;
-    if (state?.status === "running") {
-      showScreen("dashboard");
-      renderDashboard(state);
-      startPolling();
-      desktopInitDone = true;
-    } else if (state?.status === "completed" || state?.status === "stopped") {
-      showScreen("completed");
-      renderCompleted(state);
-      startPolling();
-      desktopInitDone = true;
-    } else if (state) {
-      // Reached the server (idle/unknown) — still begin polling so later pushes show.
+    if (state) {
+      // applyState picks the right screen (incl. early-run / idle); then poll.
+      applyState(state);
       startPolling();
       desktopInitDone = true;
     }
@@ -1556,17 +1564,11 @@ app.connect().then(async () => {
   if (!desktopInitDone) {
     // MCP get-status unavailable or returned idle — try REST as fallback
     const restState = await fetchRestStatus();
-    if (restState?.status === "running") {
-      showScreen("dashboard");
-      renderDashboard(restState);
-      startPolling();
-    } else if (restState?.status === "completed" || restState?.status === "stopped") {
-      showScreen("completed");
-      renderCompleted(restState);
+    if (restState) {
+      applyState(restState);
       startPolling();
     } else {
-      // Reached the MCP server but got idle/unknown — plain idle, keep polling.
-      renderIdle(restState);
+      // Reached neither — begin polling; it retries on its own cadence.
       startPolling();
     }
   }
@@ -1576,17 +1578,8 @@ app.connect().then(async () => {
   standaloneMode = true;
 
   const state = await fetchRestStatus();
-  if (state?.status === "running") {
-    showScreen("dashboard");
-    renderDashboard(state);
-    startPolling();
-  } else if (state?.status === "completed" || state?.status === "stopped") {
-    showScreen("completed");
-    renderCompleted(state);
-    startPolling();
-  } else if (state) {
-    // REST reachable, idle/unknown — plain idle, keep polling for pushes.
-    renderIdle(state);
+  if (state) {
+    applyState(state);
     startPolling();
   } else {
     // Neither MCP nor REST answered — the server is genuinely unreachable. Say so

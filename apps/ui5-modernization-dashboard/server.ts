@@ -46,6 +46,13 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
   if (fields.status === "completed" && existing.status !== "completed") merged.completedAt = now;
   if (fields.status === "stopped" && existing.status !== "stopped") merged.stoppedAt = now;
 
+  // The early-run `stage` ("started"/"linting") only applies before the phase view
+  // exists. Once a non-empty phases array arrives, drop it so it doesn't cling to
+  // the state for the rest of the run and mislead the idle screen's early branches.
+  if (Array.isArray(merged.phases) && (merged.phases as unknown[]).length > 0) {
+    merged.stage = null;
+  }
+
   // Derive counters from phases when the agent didn't push them explicitly.
   const phases = Array.isArray(merged.phases) ? merged.phases as Record<string, unknown>[] : [];
   const baseline = typeof merged.totalFindings === "number" ? merged.totalFindings as number

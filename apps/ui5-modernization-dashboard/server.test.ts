@@ -92,6 +92,34 @@ test("one explicit dashboard opening followed by 20 updates and polls exposes on
   assert.deepEqual(JSON.parse(await readFile(path.join(directory, "state.json"), "utf8")), { status: "idle" });
 });
 
+test("early-run stage is tracked then cleared once phases arrive", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-stage-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "stage-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  await client.connect(ct);
+  const get = async () => (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as Record<string, any>;
+
+  // "started" (dashboard opened) and "linting" (baseline running) are distinct,
+  // explicit sub-states before any phases — this is what lets the dashboard tell
+  // "Modernisierung gestartet" from "Linter läuft".
+  await client.callTool({ name: "update-status", arguments: { status: "running", stage: "started", project: "x", projectPath: "/x" } });
+  assert.equal((await get()).stage, "started");
+  await client.callTool({ name: "update-status", arguments: { status: "running", stage: "linting" } });
+  assert.equal((await get()).stage, "linting");
+
+  // Once the first non-empty phases array arrives, the server drops stage so it
+  // doesn't cling to the state for the rest of the run.
+  await client.callTool({ name: "update-status", arguments: { status: "running", currentPhase: 1, phases: [{ id: 1, name: "P1", status: "running" }] } });
+  assert.equal((await get()).stage, null, "stage cleared when phases exist");
+});
+
 test("stop-status marks the run stopped while preserving progress", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "ui5-stop-test-"));
   const server = createServer({ stateFile: path.join(directory, "state.json") });
@@ -429,7 +457,7 @@ test("declared status schemas survive host filtering and two stdio servers with 
   assert.deepEqual(declaredProperties(payload, update.inputSchema), payload);
   await widget.callTool({ name: "open-dashboard", arguments: {} });
   const result = await agent.callTool({ name: "update-status", arguments: declaredProperties(payload, update.inputSchema) });
-  const expected = { ...payload, startedAt: result.structuredContent?.startedAt, phaseStartedAt: result.structuredContent?.phaseStartedAt };
+  const expected = { ...payload, stage: null, startedAt: result.structuredContent?.startedAt, phaseStartedAt: result.structuredContent?.phaseStartedAt };
   assert.notEqual(expected.startedAt, payload.startedAt);
   assert.equal(expected.phaseStartedAt, expected.startedAt);
   assert.deepEqual(declaredProperties(result.structuredContent, update.outputSchema), expected);

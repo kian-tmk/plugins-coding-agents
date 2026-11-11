@@ -61466,6 +61466,10 @@ var stateSchema = external_exports.object({
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: external_exports.enum(["pending", "merged", "skipped"]).nullable(),
+  // Early-run sub-state before the phase view exists. Set by the skill: "started"
+  // (dashboard just opened, nothing analyzed) → "linting" (baseline linter running).
+  // Cleared once the first phases array arrives. Drives the idle screen's state 1/2.
+  stage: external_exports.enum(["started", "linting"]).nullable(),
   // Server-written, persistent confirmation of the last reset/clear action. Read by
   // the idle screen so the "it worked" message survives a reload or a second tab
   // (unlike the client-only transient outcome). Cleared when a new run starts.
@@ -61562,7 +61566,7 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "b3e9d34 \xB7 2026-11-10T12:29" : "dev";
+var SERVER_BUILD = true ? "745adae \xB7 2026-11-10T15:17" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";
@@ -61573,6 +61577,9 @@ async function writeState2(stateFile, patch) {
   if (phaseChanged) merged.phaseStartedAt = Number(fields.currentPhase) > 0 ? now : null;
   if (fields.status === "completed" && existing.status !== "completed") merged.completedAt = now;
   if (fields.status === "stopped" && existing.status !== "stopped") merged.stoppedAt = now;
+  if (Array.isArray(merged.phases) && merged.phases.length > 0) {
+    merged.stage = null;
+  }
   const phases = Array.isArray(merged.phases) ? merged.phases : [];
   const baseline = typeof merged.totalFindings === "number" ? merged.totalFindings : typeof merged.linterBaseline === "number" ? merged.linterBaseline : 0;
   if (baseline > 0 && phases.length > 0) {

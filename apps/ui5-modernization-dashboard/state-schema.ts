@@ -35,6 +35,10 @@ export const stateSchema = z.object({
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: z.enum(["pending", "merged", "skipped"]).nullable(),
+  // Early-run sub-state before the phase view exists. Set by the skill: "started"
+  // (dashboard just opened, nothing analyzed) → "linting" (baseline linter running).
+  // Cleared once the first phases array arrives. Drives the idle screen's state 1/2.
+  stage: z.enum(["started", "linting"]).nullable(),
   // Server-written, persistent confirmation of the last reset/clear action. Read by
   // the idle screen so the "it worked" message survives a reload or a second tab
   // (unlike the client-only transient outcome). Cleared when a new run starts.
