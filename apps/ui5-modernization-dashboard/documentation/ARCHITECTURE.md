@@ -1,6 +1,6 @@
 # UI5 Modernization Dashboard — Architektur & Stand
 
-> Stand: 2026-11-10. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
+> Stand: 2026-11-11. Diese Datei hält den Gesamtstand der MCP-App fest: wie die Teile
 > zusammenspielen, welche Daten fließen und was die App heute kann.
 >
 > **Pflege-Konvention:** Bei jeder nennenswerten Änderung am Dashboard (Datenfluss,
@@ -106,6 +106,7 @@ Wichtigste Felder (TypeScript-Schema: `ModernizationState` in `src/mcp-app.ts`):
 | `startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`, `stopReason`, `elapsedSeconds` | Zeitanker für die Timer + Stop-Info |
 | `mergedAt`, `mergeStatus` | Merge-Status (`"pending"` \| `"merged"` \| `"skipped"` \| `null`); `mergedAt` server-verwaltet |
 | `lastOutcome` | server-geschriebene, persistente Bestätigung der letzten Reset/Clear-Aktion (`kind:"reset"\|"merged-cleared"`, Branch-Namen, `at`). Der Idle-Screen liest sie aus dem State, damit die „zurückgesetzt"-Meldung Reload/zweiten Tab überlebt. Ein neuer Lauf verwirft sie |
+| `stage` | Früh-Zustand vor der Phasen-Ansicht: `"started"` (Dashboard geöffnet) → `"linting"` (Baseline-Linter läuft). Steuert die Idle-Screens „Modernisierung gestartet"/„Linter läuft". Wird verworfen, sobald die erste `phases`-Liste ankommt |
 | `phases[]` | die 6 Phasen (siehe unten) |
 | `deferredIssues[]` | zurückgestellte Findings (Completed-Screen) |
 | `reportPath`, `issuesPath` | absolute Pfade zu MODERNIZATION-REPORT.md / -ISSUES.md |
@@ -156,7 +157,7 @@ Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen 
 
 Eine Single-Page-App mit drei HTML-Screens, umgeschaltet nach `state.status`:
 
-- **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. 🚧 **In Arbeit:** `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Linter-läuft/Phase 0 (`neutral`, busy) und sonst „Bereit". Pausiert-Darstellung ist vorbereitet (kein Server-Status). Visuelle Desktop-Widget-Verifikation steht noch aus.
+- **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: allgemeiner Fehler (`error`), server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Früh-Phase „Modernisierung gestartet"/„Linter läuft" (via `stage`, `neutral`) und sonst „keine Modernisierung". Jeder Zustand mit eigener Illustration + Header-Icon. Pausiert-Darstellung vorbereitet (kein Server-Status). Alle Texte Englisch (seit 2026-11-11).
 - **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität, Git-Commits.
 - **Completed / Stopped** — Zusammenfassung: Phasen-Tabelle mit Gate-Ergebnissen, Statistiken, Links zu Report/Issues (Markdown-Viewer), Reset-Button. Bei `stopped`: Stop-Grund statt Erfolgs-Header, Remaining-Findings hervorgehoben. Beide Status nutzen denselben HTML-Screen (`screen-completed`).
 
@@ -319,9 +320,23 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
-### 2026-11-10 — Idle-Screen-Upgrade (🚧 in Arbeit), worktree-aware reset/merge, Schema-Diagnose
+### 2026-11-11 — Komplette Sprach-Umstellung auf Englisch
 
-- **🚧 Idle-Screen als genereller Zustands-/Info-Screen (noch in Arbeit):** `setIdleMessage` zu einem Varianten-Helper ausgebaut (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe via `idle-<variant>`-Klassen, optionaler Action-Button). Neue `renderIdle(state)`-Funktion mit Prioritätslogik deckt Ready, Stale-Run (>24h, mit Reset-Button), Linter-läuft (Phase 0), Server-nicht-erreichbar und Reset/Merge-Bestätigung ab; Pausiert-Darstellung ist vorbereitet (noch kein Server-Status). **Offen:** visuelle Verifikation im echten Desktop-Widget steht noch aus (Browser-Pfad per MCP geprüft, Desktop-Klicktest ausstehend).
+- **Alle nutzer-sichtbaren Strings der MCP-App und des Skills sind jetzt Englisch** (Commit `dbb4777`): Idle-Screen-Titel/-Beschreibungen aller Zustände, Inline-Confirm-Dialoge inkl. „Cancel"-Button, Verbindungs-/Fehlermeldungen, der Default-Stop-Grund, das Datums-Locale (`de-DE` → `en-US`), die `desktop-setup`-Meldungen samt Fortsetzungs-Chat-Prompt, sowie im Skill die `AskUserQuestion`-Fragen/-Optionen (`Ja`/`Nein` → `Yes`/`No` samt aller nachgelagerten Code-Referenzen), `echo`-Ausgaben und die Status-Strings in den `push_status`-Beispielen.
+- **Auch Code-Kommentare und Testdaten übersetzt.** Das einzelne `ä` im `desktop-setup`-Test-Pfad bleibt bewusst als Nicht-ASCII-Encoding-Testfall.
+- **Nicht angefasst:** die deutschen Zod-Locale-Strings im Server-Bundle sind toter Code (Zod bündelt alle Sprachen; zur Laufzeit ist immer Englisch aktiv, da keine Locale registriert wird) und diese Dokumentation (bewusste Ausnahme — bleibt Deutsch).
+
+### 2026-11-11 — Früh-Zustände (`stage`) + Reload-/Tab-robustes Rendern
+
+- **Explizites `stage`-Feld (`"started"`/`"linting"`)** (Commit `b6572b1`): Der Skill pusht `stage:"started"` zusammen mit `open-dashboard` (vor dem Linter) und `stage:"linting"` direkt vor der Baseline — so kann das Dashboard „Modernisierung gestartet" eindeutig von „Linter läuft" unterscheiden, statt aus `currentActivity` zu raten. Der Server verwirft `stage`, sobald die erste `phases`-Liste ankommt.
+- **Alle Init-/Pre-Fetch-Pfade laufen über `applyState`:** Ein Reload während der Früh-Phase landet nicht mehr auf einem leeren Running-Screen, sondern wählt den korrekten Früh-Screen.
+- **Completed-Transition abbrechbar:** Ein neuer Lauf überschreibt den alten Completed-Screen nicht mehr durch einen hängenden 1,5-s-Timer.
+- **Idle-Flash entfernt:** Der „started"-State wird gepusht, bevor die Ansicht geöffnet wird (Reihenfolge im Skill umgestellt).
+- **Tests:** neuer stage-Lifecycle-Test. 10/10 grün.
+
+### 2026-11-10 — Idle-Screen-Upgrade, worktree-aware reset/merge, Schema-Diagnose
+
+- **Idle-Screen als genereller Zustands-/Info-Screen (abgeschlossen):** `setIdleMessage` zu einem Varianten-Helper ausgebaut (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe via `idle-<variant>`-Klassen, optionaler Action-Button). Neue `renderIdle(state)`-Funktion mit Prioritätslogik deckt alle Zustände ab: „keine Modernisierung" (idle), „Modernisierung gestartet"/„Linter läuft" (Früh-Phase), Stale-Run (>24h, mit Reset-Button), Server-nicht-erreichbar, allgemeiner Fehler und Reset/Merge-Bestätigung. Jeder Zustand mit eigener Illustration + Header-Icon. Pausiert-Darstellung vorbereitet (noch kein Server-Status). Browser-Pfad verifiziert.
 - **Reload-feste Reset-Bestätigung (`lastOutcome`):** Der Server schreibt nach Reset/Clear `status:"idle"` **plus** ein persistentes `lastOutcome` (`kind:"reset"|"merged-cleared"`, Branch-Namen, Zeitstempel) ins State-Schema. Der Idle-Screen liest das aus dem State statt aus einem client-lokalen Flag — die „App zurückgesetzt"-Meldung überlebt jetzt Reload und zweiten Tab. Ein neuer Lauf (`isNewRun`) verwirft `lastOutcome` automatisch.
 - **Worktree-aware `reset-app`/`merge-app`:** Neuer Helper `getWorktreeRoot()` erkennt, ob `projectPath` ein Git-Worktree ist (Desktop „Use worktree"). Reset entfernt dann den Worktree (`git worktree remove`) statt Branch-Wechsel; Merge läuft direkt im Root-Repo (das schon auf dem Original-Branch steht) mit `merge --abort` als Rollback. Normale Checkouts unverändert.
 - **Poll-Idempotenz für Reset/Merge-Buttons:** `renderResetButton`/`renderMergeStatus` überspringen das `innerHTML`-Neuschreiben, wenn sich die Render-Signatur (`data-sig`) nicht geändert hat. Verhindert, dass der 1,5-s-Poll den Button unter einem Klick austauscht. Fehlerpfade re-rendern mit `force`.
