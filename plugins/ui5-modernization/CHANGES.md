@@ -103,6 +103,14 @@ explizite Beispiele (echter Modellname, Datum im `YYYY-MM-DD`-Format) statt gene
 > Neueste zuerst. Ein Eintrag pro nennenswerter Plugin-Änderung.
 > Format: `### JJJJ-MM-TT — Titel`, darunter kurze Stichpunkte, gern mit Commit-Hash.
 
+### 2026-11-11 — Dashboard: Pause-Button (pausieren & fortsetzen)
+
+- **Pause-Button** im Header neben Stop. Klick pausiert **direkt** (keine Bestätigung); zweistufig wie Stop: Button setzt `pauseRequested:true` (Lauf bleibt `running`, Header zeigt „Pausing…"), der Agent hält am nächsten Checkpoint und ruft `pause-status` → `status:"paused"`.
+- **Pause-Screen** (idle, Variante „warning"): zwei Buttons — **Resume** und **Stop run**. Stop ruft das echte `stop-status` (Endscreen). **Resume ist vorerst ein Platzhalter**: ein Widget kann den Agenten nicht selbst neu anwerfen (gleiche IPC-Grenze wie beim Stop), daher zeigt Resume nur den Hinweis „im Chat fortsetzen". Der passende Resume-Skill folgt.
+- **Resume-sicheres State-Modell:** `paused → running` gilt in `writeState` als Fortsetzung **desselben** Laufs (nicht neuer Lauf) — `startedAt` und Fortschritt bleiben erhalten.
+- Neu: `status:"paused"`, Feld `pauseRequested`, Tools `request-pause` (Button) + `pause-status` (Agent), REST-Backup `POST /api/request-pause`. Tests für request-pause/pause-status + Resume-Fortschrittserhalt (14/14 grün).
+- Pause-Zeitpunkt: nächster Checkpoint, auch mitten in der Phase (konsistent mit dem schnellen Stop); der spätere Resume-Skill setzt dort wieder auf.
+
 ### 2026-11-11 — Dashboard: Übergangs-Screen nach dem Linter
 
 - **Neuer Early-Stage `analyzed`** zwischen „linting" und dem ersten Phasen-Push. Der Workflow pusht ihn direkt nach dem Baseline-Linter; das Dashboard zeigt „Linter analysis completed — connecting dashboard…" statt ~1-2s relativ leer dazustehen, während die Phasen-JSON gebaut wird. Übergang danach lückenlos auf die Phasen-View (verifiziert).

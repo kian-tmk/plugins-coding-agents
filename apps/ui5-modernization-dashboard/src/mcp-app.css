@@ -105,14 +105,16 @@ body {
 
 /* Small Stop control, right-aligned in the header (flex space-between). The confirm
    row (confirmInline) and the "Stop requested…" chip both live inside this wrap. */
-.header-stop-wrap { display: inline-flex; align-items: center; flex-shrink: 0; }
+.header-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.header-stop-wrap, .header-pause-wrap { display: inline-flex; align-items: center; flex-shrink: 0; }
 .header-stop-wrap .confirm-row { margin: 0; }
-.header-stop { font-size: 12px; }
-.header-stop-requested {
+.header-stop, .header-pause { font-size: 12px; }
+.header-stop-requested, .header-pause-requested {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--sapNegativeColor, #f85149);
-  white-space: nowrap;
+  font-size: 12px; white-space: nowrap;
 }
+.header-stop-requested { color: var(--sapNegativeColor, #f85149); }
+.header-pause-requested { color: var(--sapCriticalElementColor, #f7bf00); }
 
 /* Stop confirmation popover */
 .stop-popover-body { max-width: 300px; padding: 4px 4px 0; }

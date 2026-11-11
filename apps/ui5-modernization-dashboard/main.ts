@@ -204,6 +204,15 @@ async function startStreamableHTTPServer(
     res.json({ ok: true });
   });
 
+  // REST API: request a pause at the next checkpoint without changing status.
+  // Standalone-browser backup for the Pause button; the MCP request-pause tool is the
+  // primary path. Leaves status "running" until the agent pauses and calls pause-status.
+  app.post("/api/request-pause", async (_req: Request, res: Response) => {
+    const existing = (await readState()) ?? {};
+    await saveState({ ...existing, pauseRequested: true });
+    res.json({ ok: true });
+  });
+
   // REST API: full app reset — switch the repo back to the original branch.
   app.post("/api/reset-app", async (req: Request, res: Response) => {
     stopGitPolling();

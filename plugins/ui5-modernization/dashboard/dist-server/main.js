@@ -61430,7 +61430,7 @@ var phaseSchema = external_exports.object({
 }).partial().passthrough();
 var stateSchema = external_exports.object({
   runId: external_exports.string(),
-  status: external_exports.enum(["idle", "running", "completed", "stopped"]),
+  status: external_exports.enum(["idle", "running", "completed", "stopped", "paused"]),
   project: external_exports.string(),
   projectPath: external_exports.string(),
   ui5Version: external_exports.string(),
@@ -61465,6 +61465,9 @@ var stateSchema = external_exports.object({
   stopReason: external_exports.string().nullable().describe("Free-text reason why the run was stopped early."),
   stopRequested: external_exports.boolean().nullable().describe(
     "Set true by the dashboard Stop button (request-stop) while the run is still running. The agent reads it back from update-status and stops at the next checkpoint, then calls stop-status. A pure signal \u2014 it does not change `status` on its own."
+  ),
+  pauseRequested: external_exports.boolean().nullable().describe(
+    'Set true by the dashboard Pause button (request-pause) while the run is still running. The agent reads it back from update-status and pauses at the next checkpoint, then calls pause-status (status:"paused"). A pure signal \u2014 it does not change `status` on its own.'
   ),
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
@@ -61571,10 +61574,11 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "0caa3f6 \xB7 2026-11-11T13:44" : "dev";
+var SERVER_BUILD = true ? "a44b6f8 \xB7 2026-11-11T15:16" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
-  const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";
+  const resuming = patch.status === "running" && existing.status === "paused";
+  const isNewRun = !resuming && (!existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running");
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, mergedAt: _merged, ...fields } = patch;
   const clearStale = isNewRun && existing.stopRequested ? { stopRequested: null } : {};
@@ -61940,6 +61944,38 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
       };
     }
   );
+  server.registerTool(
+    "pause-status",
+    {
+      title: "Pause Modernization",
+      description: 'Mark the modernization as paused at a safe checkpoint. The agent calls this after it has stopped its current work in response to a pause request. Sets status:"paused" and clears pauseRequested. All progress (phases, findings, branch) is preserved so the run can be resumed.',
+      inputSchema: external_exports.object({}),
+      outputSchema: stateSchema
+    },
+    async () => {
+      const merged = await writeState2(stateFile, { status: "paused", pauseRequested: null });
+      return {
+        content: [{ type: "text", text: "Modernization paused \u2014 resume or stop from the dashboard." }],
+        structuredContent: merged
+      };
+    }
+  );
+  server.registerTool(
+    "request-pause",
+    {
+      title: "Request Pause",
+      description: 'Request that the modernization pause at the next safe checkpoint. Called by the dashboard Pause button. Sets pauseRequested:true WITHOUT changing status \u2014 the run stays "running" until the agent acknowledges the flag and calls pause-status itself. Idempotent: calling it again while a pause is already requested is harmless.',
+      inputSchema: external_exports.object({}),
+      outputSchema: stateSchema
+    },
+    async () => {
+      const merged = await writeState2(stateFile, { pauseRequested: true });
+      return {
+        content: [{ type: "text", text: "Pause requested \u2014 the agent will pause at the next checkpoint." }],
+        structuredContent: merged
+      };
+    }
+  );
   G(
     server,
     resourceUri,
@@ -62108,6 +62144,11 @@ async function startStreamableHTTPServer(factory) {
   app.post("/api/request-stop", async (_req, res) => {
     const existing = await readState() ?? {};
     await saveState({ ...existing, stopRequested: true });
+    res.json({ ok: true });
+  });
+  app.post("/api/request-pause", async (_req, res) => {
+    const existing = await readState() ?? {};
+    await saveState({ ...existing, pauseRequested: true });
     res.json({ ok: true });
   });
   app.post("/api/reset-app", async (req, res) => {

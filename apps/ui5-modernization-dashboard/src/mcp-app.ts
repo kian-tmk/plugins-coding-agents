@@ -75,6 +75,8 @@ import "@ui5/webcomponents-icons/dist/developer-settings.js";
 import "@ui5/webcomponents-icons/dist/download.js";
 import "@ui5/webcomponents-icons/dist/combine.js";
 import "@ui5/webcomponents-icons/dist/stop.js";
+import "@ui5/webcomponents-icons/dist/pause.js";
+import "@ui5/webcomponents-icons/dist/play.js";
 import "@ui5/webcomponents-icons/dist/detail-view.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
@@ -126,7 +128,7 @@ interface GitActivity {
 
 interface ModernizationState {
   runId: string;
-  status: "idle" | "running" | "completed" | "stopped";
+  status: "idle" | "running" | "completed" | "stopped" | "paused";
   project: string;
   projectPath: string;
   ui5Version: string;
@@ -153,6 +155,8 @@ interface ModernizationState {
   completedAt: string | null;
   stoppedAt: string | null;
   stopReason: string | null;
+  stopRequested: boolean | null;
+  pauseRequested: boolean | null;
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
@@ -538,6 +542,7 @@ function renderDashboard(state: ModernizationState) {
 
   // Stop button in the header — only while the run is live.
   renderStopButton(state);
+  renderPauseButton(state);
 }
 
 function renderGateRow(p: PhaseState): string {
@@ -997,6 +1002,95 @@ async function requestStop(state: ModernizationState) {
   setActionStatus("ok", message || "Stop requested — waiting for the agent to finish the current step.");
 }
 
+// Render the small Pause button in the header, next to Stop. Only while the run is
+// live. Pause is non-destructive and resumable, so (unlike Stop) it fires directly
+// without a confirmation popover. A click sets pauseRequested:true via request-pause;
+// the agent reads it back and pauses at the next checkpoint, then calls pause-status
+// (status:"paused"). So the button does NOT pause the run itself.
+function renderPauseButton(state: ModernizationState, force = false) {
+  const pauseEl = document.getElementById("header-pause");
+  if (!pauseEl) return;
+
+  if (state.status !== "running") {
+    if (pauseEl.innerHTML !== "") { pauseEl.innerHTML = ""; pauseEl.removeAttribute("data-sig"); }
+    return;
+  }
+
+  const requested = state.pauseRequested === true;
+  const sig = `${requested}`;
+  if (!force && pauseEl.getAttribute("data-sig") === sig && pauseEl.querySelector("#btn-pause, .header-pause-requested")) return;
+
+  if (requested) {
+    pauseEl.innerHTML = `
+      <span class="header-pause-requested" title="The agent will pause at the next safe checkpoint.">
+        <ui5-busy-indicator active size="S" delay="0"></ui5-busy-indicator> Pausing…
+      </span>`;
+    pauseEl.setAttribute("data-sig", sig);
+    return;
+  }
+
+  const pauseTip = "Pausing can take a moment: the agent only pauses at the next safe "
+    + "checkpoint — it lets the current step finish instead of cutting it off, so the run "
+    + "stays consistent and can be resumed cleanly. During a long step (e.g. the test "
+    + "starter or a test gate) that wait can be a while.";
+  pauseEl.innerHTML = `<ui5-button id="btn-pause" icon="pause" design="Transparent" class="header-pause" tooltip="${escapeHtml(pauseTip)}" title="${escapeHtml(pauseTip)}">Pause</ui5-button>`;
+  pauseEl.setAttribute("data-sig", sig);
+  document.getElementById("btn-pause")?.addEventListener("click", () => requestPause(state));
+}
+
+// Ask the agent to pause at the next checkpoint. Sets pauseRequested via request-pause
+// (MCP primary, REST backup). Does not pause the run itself.
+async function requestPause(state: ModernizationState) {
+  const pauseEl = document.getElementById("header-pause");
+  if (pauseEl) {
+    pauseEl.innerHTML = `
+      <span class="header-pause-requested" title="The agent will pause at the next safe checkpoint.">
+        <ui5-busy-indicator active size="S" delay="0"></ui5-busy-indicator> Pausing…
+      </span>`;
+    pauseEl.setAttribute("data-sig", "true");
+  }
+  setActionStatus("working", "Pause requested — the agent will pause at the next checkpoint…");
+
+  const { failed, message } = await callAction("/api/request-pause", "request-pause");
+  if (failed) {
+    setActionStatus("error", message || "Could not request a pause.");
+    renderPauseButton(state, true);
+    return;
+  }
+  state.pauseRequested = true;
+  setActionStatus("ok", message || "Pause requested — waiting for the agent to reach a safe point.");
+}
+
+// Resume from the paused screen. PLACEHOLDER for now: a widget cannot start a new
+// agent turn on its own (same IPC limit as Stop), so until the resume skill lands this
+// only tells the user to continue the run from the chat. Wiring a resumeRequested
+// signal + the resume skill is a follow-up.
+function resumeRun(_state: ModernizationState) {
+  setIdleMessage({
+    title: "Resume from the chat",
+    subtitle: "Tell the agent to continue the modernization in the chat (e.g. “continue”). "
+      + "A one-click resume from here is coming with the resume skill.",
+    variant: "neutral",
+    illustration: "BeforeSearch",
+    headerIcon: "play",
+    iconBlue: true,
+    hint: false,
+  });
+}
+
+// Stop from the paused screen — end the run for good via stop-status (preserves
+// progress on the end screen, same as the header Stop button's finalize).
+async function stopFromPaused(state: ModernizationState) {
+  setActionStatus("working", "Stopping the paused run…");
+  const { failed, message } = await callAction("/api/stop", "stop-status");
+  if (failed) {
+    setActionStatus("error", message || "Could not stop the run.");
+    return;
+  }
+  state.status = "stopped";
+  setActionStatus("ok", message || "Run stopped.");
+}
+
 interface ActionOutcome { failed: boolean; message: string; }
 
 // Returns {failed, message}; never throws. A timeout or dead bridge is reported
@@ -1238,18 +1332,29 @@ function renderIdle(state: ModernizationState | null): void {
   // server state round-trips).
   if (pendingIdleOutcome) { setIdleMessage(pendingIdleOutcome); return; }
 
-  // Paused — status does not exist server-side yet; wired so it works once a future
-  // `status:"paused"` (or state.paused) lands.
+  // Paused — the run is held at a safe checkpoint (agent called pause-status). Offer
+  // Resume (continue the run) and Stop (end it, preserving progress).
   const paused = state && ((state.status as string) === "paused" || (state as any).paused === true);
   if (paused) {
     setIdleMessage({
       title: "Paused",
-      subtitle: "The modernization run is paused.",
+      subtitle: "The modernization is paused at a safe point. Resume to continue, or stop the run.",
       variant: "warning",
       illustration: "BeforeSearch",
-      headerIcon: "alert",
+      headerIcon: "pause",
       hint: false,
     });
+    // Two actions (resume + stop) — setIdleMessage renders a single button, so fill
+    // the action slot directly with both.
+    const actionEl = document.getElementById("idle-action");
+    if (actionEl && state) {
+      actionEl.innerHTML = `
+        <ui5-button id="btn-resume" icon="play" design="Emphasized">Resume</ui5-button>
+        <ui5-button id="btn-stop-paused" icon="stop" design="Transparent">Stop run</ui5-button>`;
+      actionEl.classList.remove("hidden");
+      document.getElementById("btn-resume")?.addEventListener("click", () => resumeRun(state));
+      document.getElementById("btn-stop-paused")?.addEventListener("click", () => stopFromPaused(state));
+    }
     return;
   }
 
@@ -1466,6 +1571,11 @@ function applyState(raw: unknown) {
     stopLiveTimer();
     showScreen("completed");
     renderCompleted(state);
+  } else if (state.status === "paused") {
+    // Paused is a hold inside a run: show the paused idle screen (resume / stop), and
+    // freeze the elapsed timer so it doesn't keep ticking while nothing runs.
+    stopLiveTimer();
+    renderIdle(state);
   }
 
   lastStatus = state.status;

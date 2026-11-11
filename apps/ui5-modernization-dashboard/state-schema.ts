@@ -14,7 +14,7 @@ const phaseSchema = z.object({
 }).partial().passthrough();
 
 export const stateSchema = z.object({
-  runId: z.string(), status: z.enum(["idle", "running", "completed", "stopped"]),
+  runId: z.string(), status: z.enum(["idle", "running", "completed", "stopped", "paused"]),
   project: z.string(), projectPath: z.string(), ui5Version: z.string(), model: z.string(),
   verificationMode: z.string(), buildCommand: z.string(), testCommand: z.string(),
   workingTreeStatus: z.string(), linterBaseline: z.number(), totalFindings: z.number(),
@@ -36,6 +36,11 @@ export const stateSchema = z.object({
     "Set true by the dashboard Stop button (request-stop) while the run is still running. "
     + "The agent reads it back from update-status and stops at the next checkpoint, then calls "
     + "stop-status. A pure signal — it does not change `status` on its own.",
+  ),
+  pauseRequested: z.boolean().nullable().describe(
+    "Set true by the dashboard Pause button (request-pause) while the run is still running. "
+    + "The agent reads it back from update-status and pauses at the next checkpoint, then calls "
+    + "pause-status (status:\"paused\"). A pure signal — it does not change `status` on its own.",
   ),
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),

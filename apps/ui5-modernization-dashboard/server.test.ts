@@ -265,6 +265,84 @@ test("a new run clears a stale stopRequested flag", async (t) => {
   assert.notEqual(fresh.stopRequested, true, "the new run starts without a stale stop request");
 });
 
+test("request-pause sets the flag without ending the run, then pause-status finalizes", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-reqpause-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "request-pause-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", linterBaseline: 40, findingsFixed: 15, findingsRemaining: 25,
+      currentPhase: 2, startedAt: "2026-11-02T12:00:00.000Z",
+      phases: [{ id: 1, name: "Mechanical Baseline", status: "completed" }],
+    },
+  });
+
+  // Pause button → request-pause: flag set, run stays "running".
+  const requested = await client.callTool({ name: "request-pause", arguments: {} });
+  const afterRequest = requested.structuredContent as any;
+  assert.equal(afterRequest.pauseRequested, true, "request-pause sets the flag");
+  assert.equal(afterRequest.status, "running", "request-pause does NOT change status");
+
+  // The agent sees the flag in its next update-status return value.
+  const nextPush = await client.callTool({ name: "update-status", arguments: { currentActivity: "finishing current step" } });
+  assert.equal((nextPush.structuredContent as any).pauseRequested, true);
+
+  // Agent pauses at a checkpoint → pause-status: status flips to paused, flag cleared.
+  const paused = await client.callTool({ name: "pause-status", arguments: {} });
+  const afterPause = paused.structuredContent as any;
+  assert.equal(afterPause.status, "paused");
+  assert.notEqual(afterPause.pauseRequested, true, "pauseRequested cleared once paused");
+  assert.equal(afterPause.findingsRemaining, 25, "progress preserved while paused");
+  assert.equal(afterPause.currentPhase, 2);
+});
+
+test("resuming from paused keeps progress and startedAt (not a new run)", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-resume-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "resume-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", linterBaseline: 40, findingsFixed: 15, findingsRemaining: 25,
+      currentPhase: 2, startedAt: "2026-11-02T12:00:00.000Z",
+      phases: [{ id: 1, name: "Mechanical Baseline", status: "completed" }, { id: 2, name: "Foundation", status: "running" }],
+    },
+  });
+  const startedAt = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.startedAt;
+  await client.callTool({ name: "request-pause", arguments: {} });
+  await client.callTool({ name: "pause-status", arguments: {} });
+
+  // Resume: agent pushes status running again. This must be treated as a continuation
+  // of the SAME run — startedAt and progress intact, not reset like a fresh run.
+  const resumed = await client.callTool({ name: "update-status", arguments: { status: "running", currentActivity: "Resuming Phase 2" } });
+  const r = resumed.structuredContent as any;
+  assert.equal(r.status, "running");
+  assert.equal(r.startedAt, startedAt, "startedAt preserved across resume (not a new run)");
+  assert.equal(r.findingsRemaining, 25, "progress preserved across resume");
+  assert.equal(r.currentPhase, 2);
+  assert.equal(r.phases.length, 2, "phases preserved across resume");
+  assert.notEqual(r.pauseRequested, true, "pauseRequested stays cleared after resume");
+});
+
 test("reset-app switches the repo back to the original branch and keeps the work branch", async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), "ui5-reset-repo-"));
   const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-reset-state-"));

@@ -32,8 +32,13 @@ export const SERVER_BUILD = typeof __BUILD_VERSION__ !== "undefined" ? __BUILD_V
 
 async function writeState(stateFile: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
   const existing = await readState(stateFile) ?? {};
-  const isNewRun = !existing.startedAt || existing.status === "idle"
-    || (patch.status === "running" && existing.status !== "running");
+  // A run going running→running keeps its state; so does resuming paused→running (the
+  // pause is a hold inside the SAME run, not a fresh start — otherwise resume would
+  // reset startedAt and wipe accumulated progress). Everything else starting to run
+  // (from idle/stopped/completed, or the very first push) is a new run.
+  const resuming = patch.status === "running" && existing.status === "paused";
+  const isNewRun = !resuming && (!existing.startedAt || existing.status === "idle"
+    || (patch.status === "running" && existing.status !== "running"));
   const now = new Date().toISOString();
   // Clocks describe received workflow events, not dates guessed by the agent.
   const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, mergedAt: _merged, ...fields } = patch;
@@ -518,6 +523,54 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
       const merged = await writeState(stateFile, { stopRequested: true });
       return {
         content: [{ type: "text", text: "Stop requested — the agent will stop at the next checkpoint." }],
+        structuredContent: merged,
+      };
+    },
+  );
+
+  // Tool: pause-status — the agent calls this once it has actually paused at a safe
+  // checkpoint. Flips status to "paused" (resumable) and clears pauseRequested since
+  // the pause is now in effect. Progress is preserved so a later resume can continue.
+  server.registerTool(
+    "pause-status",
+    {
+      title: "Pause Modernization",
+      description:
+        "Mark the modernization as paused at a safe checkpoint. The agent calls this after it has "
+        + "stopped its current work in response to a pause request. Sets status:\"paused\" and clears "
+        + "pauseRequested. All progress (phases, findings, branch) is preserved so the run can be resumed.",
+      inputSchema: z.object({}),
+      outputSchema: stateSchema,
+    },
+    async (): Promise<CallToolResult> => {
+      const merged = await writeState(stateFile, { status: "paused", pauseRequested: null });
+      return {
+        content: [{ type: "text", text: "Modernization paused — resume or stop from the dashboard." }],
+        structuredContent: merged,
+      };
+    },
+  );
+
+  // Tool: request-pause — the dashboard Pause button's entry point. Sets only the
+  // pauseRequested flag and leaves status "running". The agent reads the flag back from
+  // its next update-status call, pauses at the next checkpoint, and calls pause-status.
+  // Same two-stage decoupling as request-stop → stop-status.
+  server.registerTool(
+    "request-pause",
+    {
+      title: "Request Pause",
+      description:
+        "Request that the modernization pause at the next safe checkpoint. "
+        + "Called by the dashboard Pause button. Sets pauseRequested:true WITHOUT changing status — "
+        + "the run stays \"running\" until the agent acknowledges the flag and calls pause-status itself. "
+        + "Idempotent: calling it again while a pause is already requested is harmless.",
+      inputSchema: z.object({}),
+      outputSchema: stateSchema,
+    },
+    async (): Promise<CallToolResult> => {
+      const merged = await writeState(stateFile, { pauseRequested: true });
+      return {
+        content: [{ type: "text", text: "Pause requested — the agent will pause at the next checkpoint." }],
         structuredContent: merged,
       };
     },
