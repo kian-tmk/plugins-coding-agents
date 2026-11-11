@@ -32,6 +32,11 @@ export const stateSchema = z.object({
   completedAt: z.string().nullable().describe("Server-managed completion time; omit from updates."),
   stoppedAt: z.string().nullable().describe("Server-managed stop time; omit from updates."),
   stopReason: z.string().nullable().describe("Free-text reason why the run was stopped early."),
+  stopRequested: z.boolean().nullable().describe(
+    "Set true by the dashboard Stop button (request-stop) while the run is still running. "
+    + "The agent reads it back from update-status and stops at the next checkpoint, then calls "
+    + "stop-status. A pure signal — it does not change `status` on its own.",
+  ),
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: z.enum(["pending", "merged", "skipped"]).nullable(),

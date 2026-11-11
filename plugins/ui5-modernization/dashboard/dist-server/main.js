@@ -61463,6 +61463,9 @@ var stateSchema = external_exports.object({
   completedAt: external_exports.string().nullable().describe("Server-managed completion time; omit from updates."),
   stoppedAt: external_exports.string().nullable().describe("Server-managed stop time; omit from updates."),
   stopReason: external_exports.string().nullable().describe("Free-text reason why the run was stopped early."),
+  stopRequested: external_exports.boolean().nullable().describe(
+    "Set true by the dashboard Stop button (request-stop) while the run is still running. The agent reads it back from update-status and stops at the next checkpoint, then calls stop-status. A pure signal \u2014 it does not change `status` on its own."
+  ),
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: external_exports.enum(["pending", "merged", "skipped"]).nullable(),
@@ -61566,13 +61569,14 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "b6572b1 \xB7 2026-11-11T09:59" : "dev";
+var SERVER_BUILD = true ? "874a247 \xB7 2026-11-11T13:25" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const isNewRun = !existing.startedAt || existing.status === "idle" || patch.status === "running" && existing.status !== "running";
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, mergedAt: _merged, ...fields } = patch;
-  const merged = isNewRun ? { ...fields, startedAt: now } : { ...existing, ...fields, startedAt: existing.startedAt };
+  const clearStale = isNewRun && existing.stopRequested ? { stopRequested: null } : {};
+  const merged = isNewRun ? { ...clearStale, ...fields, startedAt: now } : { ...existing, ...fields, startedAt: existing.startedAt };
   const phaseChanged = fields.currentPhase !== void 0 && (isNewRun || fields.currentPhase !== existing.currentPhase);
   if (phaseChanged) merged.phaseStartedAt = Number(fields.currentPhase) > 0 ? now : null;
   if (fields.status === "completed" && existing.status !== "completed") merged.completedAt = now;
@@ -61907,9 +61911,25 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
       outputSchema: stateSchema
     },
     async (args) => {
-      const merged = await writeState2(stateFile, { status: "stopped", stopReason: args.reason ?? null });
+      const merged = await writeState2(stateFile, { status: "stopped", stopReason: args.reason ?? null, stopRequested: true });
       return {
         content: [{ type: "text", text: `Modernization stopped${args.reason ? `: ${args.reason}` : ""}.` }],
+        structuredContent: merged
+      };
+    }
+  );
+  server.registerTool(
+    "request-stop",
+    {
+      title: "Request Stop",
+      description: 'Request that the modernization stop at the next safe checkpoint. Called by the dashboard Stop button. Sets stopRequested:true WITHOUT changing status \u2014 the run stays "running" until the agent acknowledges the flag and calls stop-status itself. Idempotent: calling it again while a stop is already requested is harmless.',
+      inputSchema: external_exports.object({}),
+      outputSchema: stateSchema
+    },
+    async () => {
+      const merged = await writeState2(stateFile, { stopRequested: true });
+      return {
+        content: [{ type: "text", text: "Stop requested \u2014 the agent will stop at the next checkpoint." }],
         structuredContent: merged
       };
     }
@@ -62074,8 +62094,14 @@ async function startStreamableHTTPServer(factory) {
       ...existing,
       status: "stopped",
       stopReason: reason,
+      stopRequested: true,
       stoppedAt: alreadyStopped ? existing.stoppedAt : (/* @__PURE__ */ new Date()).toISOString()
     });
+    res.json({ ok: true });
+  });
+  app.post("/api/request-stop", async (_req, res) => {
+    const existing = await readState() ?? {};
+    await saveState({ ...existing, stopRequested: true });
     res.json({ ok: true });
   });
   app.post("/api/reset-app", async (req, res) => {

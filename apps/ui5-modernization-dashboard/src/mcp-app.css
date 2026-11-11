@@ -103,6 +103,32 @@ body {
   font-size: 20px; color: var(--sapLinkColor, #008fff);
 }
 
+/* Small Stop control, right-aligned in the header (flex space-between). The confirm
+   row (confirmInline) and the "Stop requested…" chip both live inside this wrap. */
+.header-stop-wrap { display: inline-flex; align-items: center; flex-shrink: 0; }
+.header-stop-wrap .confirm-row { margin: 0; }
+.header-stop { font-size: 12px; }
+.header-stop-requested {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--sapNegativeColor, #f85149);
+  white-space: nowrap;
+}
+
+/* Stop confirmation popover */
+.stop-popover-body { max-width: 300px; padding: 4px 4px 0; }
+.stop-popover-text { margin: 0; font-size: 13px; color: var(--sapTextColor); }
+.stop-popover-warning {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 0 10px; padding: 8px 10px;
+  font-size: 12px; line-height: 1.4;
+  color: var(--sapNegativeColor, #f85149);
+  background: var(--sapErrorBackground, rgba(248, 81, 73, 0.1));
+  border: 1px solid var(--sapNegativeColor, #f85149);
+  border-radius: var(--sapElement_BorderCornerRadius, 6px);
+}
+.stop-popover-warning-icon { color: var(--sapNegativeColor, #f85149); flex-shrink: 0; margin-top: 1px; }
+.stop-popover-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 4px; }
+
 /* ── Dashboard / Running screen ── */
 #screen-dashboard {
   padding: 0 0 14px;

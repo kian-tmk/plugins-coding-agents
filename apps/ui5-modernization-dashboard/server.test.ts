@@ -177,6 +177,83 @@ test("stop-status marks the run stopped while preserving progress", async (t) =>
   assert.equal(state2.stopReason, null);
 });
 
+test("request-stop sets the flag without ending the run, then stop-status finalizes", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-reqstop-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "request-stop-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // Mid-run state, as the agent would push it.
+  await client.callTool({
+    name: "update-status",
+    arguments: {
+      status: "running", linterBaseline: 40, findingsFixed: 15, findingsRemaining: 25,
+      currentPhase: 2, startedAt: "2026-11-02T12:00:00.000Z",
+      phases: [{ id: 1, name: "Mechanical Baseline", status: "completed" }],
+    },
+  });
+
+  // The dashboard Stop button → request-stop: flag is set, run stays "running".
+  const requested = await client.callTool({ name: "request-stop", arguments: {} });
+  assert.equal(requested.isError, undefined);
+  const afterRequest = (requested.structuredContent as any);
+  assert.equal(afterRequest.stopRequested, true, "request-stop sets the flag");
+  assert.equal(afterRequest.status, "running", "request-stop does NOT change status");
+  assert.equal(afterRequest.findingsRemaining, 25, "progress preserved");
+
+  // The agent reads the flag back from its next update-status call (the merged state).
+  const nextPush = await client.callTool({ name: "update-status", arguments: { currentActivity: "still working" } });
+  assert.equal((nextPush.structuredContent as any).stopRequested, true,
+    "the agent sees stopRequested in the update-status return value");
+
+  // request-stop is idempotent.
+  const again = await client.callTool({ name: "request-stop", arguments: {} });
+  assert.equal((again.structuredContent as any).stopRequested, true);
+  assert.equal((again.structuredContent as any).status, "running");
+
+  // Then the agent calls stop-status to finalize: status flips, flag stays true.
+  await client.callTool({ name: "stop-status", arguments: { reason: "Stopped by user from dashboard" } });
+  const final = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
+  assert.equal(final.status, "stopped");
+  assert.equal(final.stopReason, "Stopped by user from dashboard");
+  assert.equal(final.stopRequested, true, "flag stays coherent through finalize");
+  assert.equal(final.findingsRemaining, 25, "progress preserved through the whole flow");
+  assert.ok(final.stoppedAt, "stoppedAt set on finalize");
+});
+
+test("a new run clears a stale stopRequested flag", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-reqstop-clear-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "request-stop-clear-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // A finished-and-stopped run leaves stopRequested true.
+  await client.callTool({ name: "update-status", arguments: { status: "running", linterBaseline: 10, startedAt: "2026-11-02T12:00:00.000Z" } });
+  await client.callTool({ name: "stop-status", arguments: {} });
+  assert.equal((await client.callTool({ name: "get-status", arguments: {} })).structuredContent?.stopRequested, true);
+
+  // Starting a fresh run straight from the stopped state (status stopped→running, no
+  // reset in between) must not inherit the old flag — this is the real stale path.
+  await client.callTool({ name: "update-status", arguments: { status: "running", stage: "started", project: "y", projectPath: "/y" } });
+  const fresh = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
+  assert.equal(fresh.status, "running");
+  assert.notEqual(fresh.stopRequested, true, "the new run starts without a stale stop request");
+});
+
 test("reset-app switches the repo back to the original branch and keeps the work branch", async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), "ui5-reset-repo-"));
   const stateDir = await mkdtemp(path.join(tmpdir(), "ui5-reset-state-"));

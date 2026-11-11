@@ -37,8 +37,11 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
   const now = new Date().toISOString();
   // Clocks describe received workflow events, not dates guessed by the agent.
   const { startedAt: _started, phaseStartedAt: _phase, completedAt: _completed, stoppedAt: _stopped, mergedAt: _merged, ...fields } = patch;
+  // A new run must not inherit a stale stopRequested flag from a previous (stopped) run.
+  // Only clear it when one was actually set, so a clean first run stays free of the field.
+  const clearStale = isNewRun && existing.stopRequested ? { stopRequested: null } : {};
   const merged: Record<string, unknown> = isNewRun
-    ? { ...fields, startedAt: now }
+    ? { ...clearStale, ...fields, startedAt: now }
     : { ...existing, ...fields, startedAt: existing.startedAt };
   const phaseChanged = fields.currentPhase !== undefined
     && (isNewRun || fields.currentPhase !== existing.currentPhase);
@@ -477,9 +480,37 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
       outputSchema: stateSchema,
     },
     async (args: { reason?: string }): Promise<CallToolResult> => {
-      const merged = await writeState(stateFile, { status: "stopped", stopReason: args.reason ?? null });
+      // Keep stopRequested true for consistency: the agent (or a reloaded UI) should
+      // see a single coherent "the user asked to stop" signal alongside the terminal state.
+      const merged = await writeState(stateFile, { status: "stopped", stopReason: args.reason ?? null, stopRequested: true });
       return {
         content: [{ type: "text", text: `Modernization stopped${args.reason ? `: ${args.reason}` : ""}.` }],
+        structuredContent: merged,
+      };
+    },
+  );
+
+  // Tool: request-stop — the dashboard Stop button's entry point. Sets only the
+  // stopRequested flag and leaves status "running", so the live view keeps showing the
+  // run while the agent finishes the current checkpoint. The agent reads the flag back
+  // from its next update-status call and then calls stop-status to finalize. Decoupling
+  // the button from the terminal state is what makes "stop at the next safe point" honest.
+  server.registerTool(
+    "request-stop",
+    {
+      title: "Request Stop",
+      description:
+        "Request that the modernization stop at the next safe checkpoint. " +
+        "Called by the dashboard Stop button. Sets stopRequested:true WITHOUT changing status — " +
+        "the run stays \"running\" until the agent acknowledges the flag and calls stop-status itself. " +
+        "Idempotent: calling it again while a stop is already requested is harmless.",
+      inputSchema: z.object({}),
+      outputSchema: stateSchema,
+    },
+    async (): Promise<CallToolResult> => {
+      const merged = await writeState(stateFile, { stopRequested: true });
+      return {
+        content: [{ type: "text", text: "Stop requested — the agent will stop at the next checkpoint." }],
         structuredContent: merged,
       };
     },

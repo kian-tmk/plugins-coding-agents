@@ -50,6 +50,7 @@ import "@ui5/webcomponents/dist/TableHeaderCell.js";
 import "@ui5/webcomponents/dist/TableRow.js";
 import "@ui5/webcomponents/dist/TableCell.js";
 import "@ui5/webcomponents/dist/Bar.js";
+import "@ui5/webcomponents/dist/Popover.js";
 import "@ui5/webcomponents/dist/ProgressIndicator.js";
 import "@ui5/webcomponents-fiori/dist/IllustratedMessage.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Tools.js";
@@ -73,6 +74,7 @@ import "@ui5/webcomponents-icons/dist/source-code.js";
 import "@ui5/webcomponents-icons/dist/developer-settings.js";
 import "@ui5/webcomponents-icons/dist/download.js";
 import "@ui5/webcomponents-icons/dist/combine.js";
+import "@ui5/webcomponents-icons/dist/stop.js";
 import "@ui5/webcomponents-icons/dist/detail-view.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
@@ -533,6 +535,9 @@ function renderDashboard(state: ModernizationState) {
 
   // Phase commit list
   buildPhaseCommits(state.phases, state.gitActivity ?? null);
+
+  // Stop button in the header — only while the run is live.
+  renderStopButton(state);
 }
 
 function renderGateRow(p: PhaseState): string {
@@ -883,6 +888,113 @@ function renderResetButton(state: ModernizationState, force = false) {
       rewire: () => renderResetButton(state, true),
     });
   });
+}
+
+// Render the small Stop button in the dashboard header. Only shown while the run is
+// live (status "running"). A click opens a confirmation popover anchored to the button
+// (window.confirm is blocked in the sandboxed Desktop iframe). Confirming calls
+// request-stop — which only sets the stopRequested flag and leaves status "running".
+// The agent reads that flag back and stops at the next safe checkpoint, then calls
+// stop-status to flip the run to "stopped". So the button does NOT end the run itself.
+//
+// In phases 3 and 4 the agent runs long parallel fix batches in the FOREGROUND, so it
+// cannot see the flag until the current batch returns — the stop can take a while. The
+// popover shows a red warning there telling the user they may need to end the run via
+// the chat instead.
+function renderStopButton(state: ModernizationState, force = false) {
+  const stopEl = document.getElementById("header-stop");
+  if (!stopEl) return;
+
+  // Nothing to stop unless a run is actively in progress.
+  if (state.status !== "running") {
+    if (stopEl.innerHTML !== "") { stopEl.innerHTML = ""; stopEl.removeAttribute("data-sig"); }
+    return;
+  }
+
+  // Once the stop has been requested, the button becomes a non-clickable status chip
+  // until the agent acknowledges (which flips status away from "running").
+  const requested = state.stopRequested === true;
+  const sig = `${requested}`;
+  if (!force && stopEl.getAttribute("data-sig") === sig && stopEl.querySelector("#btn-stop, .header-stop-requested")) return;
+
+  if (requested) {
+    stopEl.innerHTML = `
+      <span class="header-stop-requested" title="The agent will stop at the next safe checkpoint.">
+        <ui5-busy-indicator active size="S" delay="0"></ui5-busy-indicator> Stop requested…
+      </span>`;
+    stopEl.setAttribute("data-sig", sig);
+    return;
+  }
+
+  // Button + its confirmation popover. The popover lives as a sibling so a background
+  // re-render of the button doesn't tear down an open dialog. It is anchored to the
+  // button via `opener` and toggled through the `open` property (modern Popover API).
+  stopEl.innerHTML = `
+    <ui5-button id="btn-stop" icon="stop" design="Transparent" class="header-stop">Stop</ui5-button>
+    <ui5-popover id="stop-popover" class="stop-popover" opener="btn-stop" placement="Bottom" header-text="Stop modernization?">
+      <div class="stop-popover-body">
+        <div id="stop-popover-warning" class="stop-popover-warning" style="display:none"></div>
+        <p class="stop-popover-text">The agent finishes the current step and stops at the next safe point — your work stays on the branch.</p>
+      </div>
+      <div slot="footer" class="stop-popover-footer">
+        <ui5-button id="stop-popover-cancel" design="Transparent">Cancel</ui5-button>
+        <ui5-button id="stop-popover-confirm" design="Negative" icon="stop">Stop</ui5-button>
+      </div>
+    </ui5-popover>`;
+  stopEl.setAttribute("data-sig", sig);
+
+  const popover = document.getElementById("stop-popover") as any;
+  document.getElementById("btn-stop")?.addEventListener("click", () => {
+    // Phase 3/4: long foreground batches — warn that the stop may be slow.
+    const slowPhase = state.currentPhase === 3 || state.currentPhase === 4;
+    const warnEl = document.getElementById("stop-popover-warning");
+    if (warnEl) {
+      if (slowPhase) {
+        warnEl.innerHTML = `<ui5-icon name="alert" class="stop-popover-warning-icon"></ui5-icon>`
+          + `<span>Stopping may take a while in this phase — the agent can't react until the current batch finishes. `
+          + `If it doesn't stop promptly, end the run through the chat.</span>`;
+        warnEl.style.display = "";
+      } else {
+        warnEl.style.display = "none";
+        warnEl.innerHTML = "";
+      }
+    }
+    if (popover) popover.open = true;
+  });
+  document.getElementById("stop-popover-cancel")?.addEventListener("click", () => {
+    if (popover) popover.open = false;
+  });
+  document.getElementById("stop-popover-confirm")?.addEventListener("click", () => {
+    if (popover) popover.open = false;
+    requestStop(state);
+  });
+}
+
+// Ask the agent to stop at the next checkpoint. Sets stopRequested via request-stop
+// (MCP primary, REST backup — handled by callAction). Does not end the run itself.
+async function requestStop(state: ModernizationState) {
+  // Reflect the request immediately so a slow round-trip doesn't leave the confirm row up.
+  const stopEl = document.getElementById("header-stop");
+  if (stopEl) {
+    stopEl.innerHTML = `
+      <span class="header-stop-requested" title="The agent will stop at the next safe checkpoint.">
+        <ui5-busy-indicator active size="S" delay="0"></ui5-busy-indicator> Stop requested…
+      </span>`;
+    stopEl.setAttribute("data-sig", "true");
+  }
+  setActionStatus("working", "Stop requested — the agent will stop at the next checkpoint…");
+
+  const { failed, message } = await callAction("/api/request-stop", "request-stop");
+  if (failed) {
+    setActionStatus("error", message || "Could not request a stop.");
+    // Let the user retry — restore the clickable button.
+    renderStopButton(state, true);
+    return;
+  }
+  // Optimistically mark the local state so a poll landing before the server flag
+  // propagates doesn't flip the chip back to a button.
+  state.stopRequested = true;
+  setActionStatus("ok", message || "Stop requested — waiting for the agent to finish the current step.");
 }
 
 interface ActionOutcome { failed: boolean; message: string; }

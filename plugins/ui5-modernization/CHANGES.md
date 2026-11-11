@@ -103,6 +103,17 @@ explizite Beispiele (echter Modellname, Datum im `YYYY-MM-DD`-Format) statt gene
 > Neueste zuerst. Ein Eintrag pro nennenswerter Plugin-Änderung.
 > Format: `### JJJJ-MM-TT — Titel`, darunter kurze Stichpunkte, gern mit Commit-Hash.
 
+### 2026-11-11 — Stop-Button im Dashboard (graceful stop)
+
+- **Stop-Button** klein oben rechts im Dashboard-Header (laufender Lauf). Klick → Bestätigungs-**Popover** (`ui5-popover`, am Button verankert) mit „Stop"/„Cancel" statt `window.confirm` (im Desktop-iframe blockiert) → Lauf wird am nächsten sicheren Checkpoint beendet.
+- **Phase-3/4-Warnung:** In diesen Phasen laufen lange Vordergrund-Batches; das Popover zeigt dort eine **rote Warnung**, dass der Stopp dauern kann und der Lauf ggf. über den Chat beendet werden sollte. In anderen Phasen keine Warnung.
+- **Zweistufig:** Button ruft neues `request-stop`-Tool → setzt nur `stopRequested:true`, `status` bleibt `running` (Header zeigt „Stop requested…"). Erst der Agent schaltet via `stop-status` auf `stopped` + Endscreen. Bildet „zum nächstmöglichen Zeitpunkt" ehrlich ab.
+- **Signalweg:** Der Agent liest `stopRequested` aus dem Rückgabewert seines nächsten `update-status` und bricht am Checkpoint ab — inkl. `TaskStop` auf laufende Sub-Agenten (harter Stopp). Primär MCP-Tool (CLI + Desktop), REST `POST /api/request-stop` nur Standalone-Backup.
+- **Neues Feld** `stopRequested` im State-Schema; ein neuer Lauf löscht ein altes Flag (kein Übertrag).
+- **SKILL.md:** neuer Abschnitt „Checking for a stop request" + erweiterte „Stopping early"-Prozedur (TaskStop zuerst, dann `stop-status`).
+- **Latenz-Fix (lange Blocker):** Ein externer Prozess kann einen laufenden CLI-Turn NICHT unterbrechen (per Doku bestätigt — Messaging-Socket liefert nur Nachrichten, kein Turn-Interrupt). Darum laufen die langen Blocker (Phase-1 `modernize-test-starter`, alle Verification-Gates) jetzt **vollständig als Hintergrund-Sub-Agent**, während der Orchestrator mit einem **`Monitor`** auf `~/.ui5-modernization-dashboard/state.json` wartet und bei `stopRequested:true` sofort `TaskStop` + `stop-status` ruft (~1-3s statt 30s+). **Wichtig:** Der Orchestrator darf die delegierte Arbeit NICHT parallel selbst im Vordergrund machen — genau das verhinderte im ersten Testlauf das Stoppen (er rief nur EINMAL `get-status` und arbeitete dann ~90s selbst weiter). Kurze Fix-Batches (Phasen 2-5) bleiben Vordergrund.
+- Tests für `request-stop` + Stale-Flag-Reset ergänzt (server.test.ts, 12/12 grün). Delivery via `npm run deliver`.
+
 ### 2026-11-03 — Dashboard-Rebuild: State, Tool-Split, Desktop-Setup
 
 - **Dashboard-Neuaufbau** ab committetem HEAD (b6116bd). Kaputte Fullscreen-Erweiterung zurückgenommen, funktionierende Minimal-Form beibehalten.

@@ -178,7 +178,8 @@ async function startStreamableHTTPServer(
     res.json({ ok: true });
   });
 
-  // REST API: stop the run early, preserving progress (for a future dashboard button)
+  // REST API: stop the run early, preserving progress (standalone-browser backup for
+  // the dashboard Stop button → the MCP stop-status tool is the primary path).
   app.post("/api/stop", async (req: Request, res: Response) => {
     stopGitPolling();
     const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
@@ -188,8 +189,18 @@ async function startStreamableHTTPServer(
       ...existing,
       status: "stopped",
       stopReason: reason,
+      stopRequested: true,
       stoppedAt: alreadyStopped ? existing.stoppedAt : new Date().toISOString(),
     });
+    res.json({ ok: true });
+  });
+
+  // REST API: request a stop at the next checkpoint without changing status. Standalone-
+  // browser backup for the Stop button; the MCP request-stop tool is the primary path.
+  // Leaves status "running" so the live view persists until the agent acknowledges.
+  app.post("/api/request-stop", async (_req: Request, res: Response) => {
+    const existing = (await readState()) ?? {};
+    await saveState({ ...existing, stopRequested: true });
     res.json({ ok: true });
   });
 

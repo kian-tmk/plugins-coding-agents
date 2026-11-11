@@ -315,16 +315,84 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 | Each phase ends (after commit) | phase N `status:"completed"`, `findingsAfter`, `filesChanged`, `commit`, `commitMessage`, `durationSeconds`, `findingsFixed`, `findingsRemaining`, `overallProgress` |
 | Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
 | User stops the run early | Call the **`stop-status`** tool (optional `reason`) — do NOT push `status:"completed"`. Preserves remaining findings, phases and deferred issues on the end screen. |
+| Dashboard **Stop button** clicked | The server sets `stopRequested:true` (status stays `running`). You see it in the **return value of your next `update-status`** — then run the Stopping-early procedure below. |
 | User asks to reset/undo | Call the **`reset-app`** tool — discards uncommitted changes, switches back to original branch, resets dashboard to idle. Never do manual git checkout/branch -D. |
 | Run complete, clean (auto-merge) | Call the **`merge-app`** tool — merges work branch into original via `git merge --no-ff`. Do NOT merge manually. |
 
 **Rule:** push `currentActivity` whenever the agent switches tasks — before launching a sub-agent, after it returns, before running the linter, before committing. Every meaningful action should be visible in the dashboard within seconds.
 
-**Stopping early (user asks to stop/abort mid-run):** This is a specific, mandatory procedure — do NOT just end your turn, and do NOT call `reset-status` (that wipes the dashboard to idle and loses the stop context). Do exactly this, in order:
+### Checking for a stop request (dashboard Stop button)
 
-1. Stop any running sub-agent / background work first.
-2. Call the **`stop-status`** MCP tool with a short `reason` (e.g. `{"reason":"Stopped by user"}`). This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
-3. Tell the user the run is stopped, which branch the work is on (`workBranch`), and that they can reset to `originalBranch` from the dashboard or by asking you.
+The dashboard has a **Stop button** in the header. Clicking it does **not** stop the run by
+itself — the agent (you) can't be interrupted mid-task from outside. Instead the button sets
+`stopRequested:true` in the dashboard state and leaves `status:"running"`. You learn about it
+because **every `update-status` call returns the merged state** as its result: after each
+push, check whether the returned object has `stopRequested === true` (or `status === "stopped"`,
+if a REST backup finalized it). If it does, the user clicked Stop — run the **Stopping early**
+procedure below **at the next checkpoint**.
+
+- **Checkpoints** are the points where you already call `push_status`: phase start, after a
+  sub-agent batch returns, before a commit, before a gate. At those points the tree is
+  consistent (no half-applied edits), so it is safe to stop there. Do not abandon work in the
+  middle of a single file edit — finish the current atomic step, then stop.
+- This check is essentially free and only matters when a dashboard is attached. In
+  **non-interactive mode** or when `DASHBOARD=false` there is no button, so `stopRequested`
+  never appears — the check simply never fires.
+
+#### The blocking problem — long steps must poll, not block
+
+A foreground sub-agent (`modernize-test-starter`, a verification-gate test run) **blocks you
+completely** while it runs: you make no tool calls, so you cannot see `stopRequested` until it
+returns — which can be minutes. An external Stop click **cannot** interrupt a blocked turn
+(there is no supported IPC for that). So for the **long-running steps** below, run the
+**stoppable wait** pattern so a Stop click is honored within ~1-3s:
+
+1. **Delegate the whole step to a background sub-agent — then actually wait.** Launch the
+   `modernize-test-starter` / test-gate work as a **background** Agent task and capture its id.
+   **Do NOT also do that step's work yourself in the foreground.** If you start the background
+   task and then keep reading/writing/committing the same files yourself, there is no idle
+   window to interrupt and the Stop click is useless — exactly the bug this pattern prevents.
+   Hand the step off completely; your only job now is to watch for completion or a stop.
+
+2. **Arm a `Monitor` on the stop flag before you wait.** The dashboard state lives at
+   `~/.ui5-modernization-dashboard/state.json`. Start a `Monitor` that emits a line the moment
+   the flag flips, e.g.:
+
+   ```bash
+   until grep -q '"stopRequested"[[:space:]]*:[[:space:]]*true' ~/.ui5-modernization-dashboard/state.json 2>/dev/null; do sleep 1; done; echo STOP_REQUESTED
+   ```
+
+   This wakes you within ~1s of the click without busy-looping. You are also woken when the
+   background task finishes (the harness notifies you). So you resume on **either** event:
+   - **Background task finished first** → cancel the Monitor (`TaskStop` its id), push the
+     "returned" status, continue the workflow normally.
+   - **Monitor fired `STOP_REQUESTED` first** → **stop now**: `TaskStop` the background
+     sub-agent, then run the **Stopping early** procedure below (it finalizes with
+     `stop-status`). Do not wait for the task to end on its own.
+
+3. If you cannot use `Monitor`, fall back to an explicit poll loop: repeatedly call
+   **`get-status`** (read-only, ~2s apart) and check `stopRequested`, re-issuing the check after
+   each wait — a **single** `get-status` right after launch is NOT enough (that was the original
+   bug). Never push `update-status` on every tick; only when something changes.
+
+This pattern is **required** for the long blockers explicitly marked below (Phase 1 test
+starter; every verification gate) and nowhere else. The short parallel fix batches (Phases 3/4)
+return quickly, so the plain between-batches checkpoint check is enough there — leave them
+foreground. When `DASHBOARD=false` / non-interactive, skip the Monitor and just run the step.
+
+**Stopping early (user asks to stop/abort mid-run, OR `stopRequested:true` seen):** This is a
+specific, mandatory procedure — do NOT just end your turn, and do NOT call `reset-status` (that
+wipes the dashboard to idle and loses the stop context). Do exactly this, in order:
+
+1. **Stop all running sub-agents / background work immediately** with **`TaskStop`** (pass each
+   running sub-agent's id/name). Do not wait for them to finish and do not launch new ones. This
+   is the "stop at the next possible moment" the user expects — in flight work is cut, not left
+   running in the background.
+2. Do **not** commit the current phase if you are mid-step — partial edits stay uncommitted on
+   the `workBranch`, which is fine: the user's original branch is the backup and the dashboard
+   reset handles cleanup.
+3. Call the **`stop-status`** MCP tool with a short `reason` (e.g. `{"reason":"Stopped by user from dashboard"}`). This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
+4. Tell the user the run is stopped, which branch the work is on (`workBranch`), and that they can reset to `originalBranch` from the dashboard or by asking you.
 
 Never push `status:"completed"` or `status:"idle"` for a user stop. It is fire-and-forget like the other pushes.
 
@@ -463,6 +531,14 @@ push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Mo
 ```
 
 Launch sub-agent with `modernize-test-starter`. Use custom prompt instructing it to: read the skill, run Phase 0 detection completely before changes, follow ALL phases, verify against the 14-item Completion Checklist.
+
+**This is a long blocker — use the stoppable wait pattern** ("The blocking problem" above): launch
+the `modernize-test-starter` sub-agent in the **background**, arm the stop-flag `Monitor`, and wait
+for whichever comes first (task done → continue; stop → `TaskStop` + Stopping-early). **Do the test
+starter work ONLY inside that background sub-agent — do not read/write/commit the test files
+yourself in the foreground while it runs**, or there is no interruptible window (this is exactly
+what went wrong before). In non-interactive mode / `DASHBOARD=false` a plain foreground launch is
+fine.
 
 Push after sub-agent returns:
 ```bash
@@ -832,6 +908,13 @@ push_status "{\"status\":\"running\",\"currentPhase\":$CURRENT_PHASE,\"currentAc
 
 **Delegate to a sub-agent.** Print `⏳ Phase {N} gate: launching test sub-agent...`
 
+**This is a long blocker — use the stoppable wait pattern** ("The blocking problem" above): launch
+the test sub-agent in the **background**, arm the stop-flag `Monitor`, and wait for whichever comes
+first. If `stopRequested` turns true during the gate, `TaskStop` the test task and run the
+Stopping-early procedure instead of waiting for the tests to finish. **Run the tests only inside
+the background sub-agent — don't also run them yourself in the foreground.** (Non-interactive mode
+/ `DASHBOARD=false`: foreground launch is fine — no Stop button exists.)
+
 Sub-agent instructions:
 1. Read `references/build-and-test-commands.md` → detect Maven vs npm
 2. Run the test command (Maven §1.3 or npm test). **Linter-only is NOT verification** unless no test command exists.
@@ -851,6 +934,9 @@ Same sub-agent but do NOT debug failures. Report results only:
 ✅/❌ Tests: N passed, N failed, N skipped
 Failed test names (≤10)
 ```
+
+Same long-blocker rule as Full autonomous: launch the test sub-agent in the **background** and
+poll `get-status` (~2s) so a Stop click is honored mid-gate (`TaskStop` + Stopping-early).
 
 Push result (completed or failed), then wait for user: "continue" / "skip phase" / "run tests" / "abort".
 
@@ -884,7 +970,13 @@ Instructions:
 
 ### Sub-agent execution rules
 
-- **Foreground mode only.** Launch all sub-agents for a phase step in a SINGLE message — blocks until all return.
+- **Foreground, single-message batches — for the short parallel fix steps** (Phases 2–5 fix
+  batches). Launch all sub-agents for the step in ONE message; it blocks until all return. These
+  return quickly, so the between-batches `stopRequested` checkpoint is responsive enough.
+- **Exception — long blockers run in the background.** The Phase 1 test-starter sub-agent and
+  every verification-gate test run use the **stoppable wait** pattern instead (background launch +
+  `get-status` poll), so a Stop click is honored within seconds rather than after minutes. See
+  "The blocking problem" above.
 - **Cap ~8 concurrent per message.** Batch sequentially if more — do NOT stop after one batch.
 - **Group related files** (controller + its XML view) into one sub-agent.
 - **No validation between batches within a phase step.** Checks happen AFTER phase step completes.
