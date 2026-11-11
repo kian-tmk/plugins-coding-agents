@@ -467,7 +467,13 @@ grep -c " error \| warning " "${TMPDIR:-/tmp}/ui5-linter-baseline.txt" || echo "
 
 Parse: total errors/warnings, grouped by rule ID and file. Store for final comparison.
 
-Push initial dashboard state after parsing the baseline. This push carries the `phases` array, which moves the dashboard from the linter screen to the live phase view. Read the two branch names back from the file written in Step 1.0 (they are not in this shell's variables yet):
+**Immediately after the linter finishes**, push the **"analyzed"** stage so the dashboard shows "Linter analysis completed — connecting…" while you build the phases array. Without this the screen sits on the "Linter running" message (or briefly looks idle) for the ~1-2s it takes to assemble `$PHASES_JSON` and send the next push:
+
+```bash
+push_status "{\"status\":\"running\",\"stage\":\"analyzed\",\"currentActivity\":\"Linter analysis completed — connecting dashboard…\"}"
+```
+
+Call `update-status` with that payload, then push the initial dashboard state after parsing the baseline. This push carries the `phases` array, which moves the dashboard from the early screens to the live phase view. Read the two branch names back from the file written in Step 1.0 (they are not in this shell's variables yet):
 
 ```bash
 ORIGINAL_BRANCH=$(sed -n '1p' "${TMPDIR:-/tmp}/ui5-modernization-branches.txt" 2>/dev/null)

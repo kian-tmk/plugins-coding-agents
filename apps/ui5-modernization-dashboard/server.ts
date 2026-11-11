@@ -49,10 +49,17 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
   if (fields.status === "completed" && existing.status !== "completed") merged.completedAt = now;
   if (fields.status === "stopped" && existing.status !== "stopped") merged.stoppedAt = now;
 
-  // The early-run `stage` ("started"/"linting") only applies before the phase view
-  // exists. Once a non-empty phases array arrives, drop it so it doesn't cling to
-  // the state for the rest of the run and mislead the idle screen's early branches.
-  if (Array.isArray(merged.phases) && (merged.phases as unknown[]).length > 0) {
+  // The early-run `stage` ("started"/"linting"/"analyzed") only applies before the
+  // phase view exists. Drop it once a phase has ACTUALLY started — not merely once a
+  // phases array exists. The first phases push sends every phase "pending"; keeping
+  // `stage` through that lets the dashboard hold the "analyzed" screen (instead of an
+  // empty phase shell) until Phase 1 flips to running. Clear it as soon as any phase
+  // is running/completed/failed, or real progress shows.
+  const mergedPhases = Array.isArray(merged.phases) ? merged.phases as Record<string, unknown>[] : [];
+  const aPhaseStarted = mergedPhases.some(
+    p => p.status === "running" || p.status === "completed" || p.status === "failed",
+  ) || Number(merged.currentPhase ?? 0) >= 1;
+  if (aPhaseStarted) {
     merged.stage = null;
   }
 

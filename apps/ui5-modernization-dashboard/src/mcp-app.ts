@@ -158,7 +158,7 @@ interface ModernizationState {
   lastGitActivityAt: string | null;
   mergedAt: string | null;
   mergeStatus: "pending" | "merged" | "skipped" | null;
-  stage: "started" | "linting" | null;
+  stage: "started" | "linting" | "analyzed" | null;
   lastOutcome: {
     kind: "reset" | "merged-cleared";
     originalBranch: string | null;
@@ -1281,9 +1281,29 @@ function renderIdle(state: ModernizationState | null): void {
   // both arrive before any phases, and `stage` is dropped once phases exist. A
   // running state with no phases and no stage (older skill) still means a run is
   // under way, so default to the "started" screen rather than the idle-0 screen.
-  if (state && state.status === "running"
-      && (!Array.isArray(state.phases) || state.phases.length === 0)) {
-    if (state.stage === "linting") {
+  // This also covers the window where a pending-only phases array has arrived but no
+  // phase is running yet — applyState keeps us here (notStartedYet) precisely so the
+  // user doesn't see an empty phase shell, so the branch must match that same case.
+  const earlyPhases = Array.isArray(state?.phases) ? state!.phases : [];
+  const earlyAnyActive = earlyPhases.some(
+    p => p.status === "running" || p.status === "completed" || p.status === "failed"
+  );
+  const earlyHasProgress = (state?.currentPhase ?? 0) >= 1
+    || (state?.findingsFixed ?? 0) > 0 || (state?.overallProgress ?? 0) > 0;
+  if (state && state.status === "running" && !earlyAnyActive && !earlyHasProgress) {
+    if (state.stage === "analyzed") {
+      // State 2b — Linter done, phases about to arrive. Bridges the gap so the screen
+      // isn't blank between the linter finishing and the first phases push landing.
+      setIdleMessage({
+        title: "Linter analysis completed",
+        subtitle: "The baseline scan is done — connecting the dashboard to the run…",
+        variant: "neutral",
+        illustration: "tnt/Settings",
+        headerIcon: "sys-enter-2",
+        iconBlue: true,
+        hint: false,
+      });
+    } else if (state.stage === "linting") {
       // State 2 — Linter running.
       setIdleMessage({
         title: "Linter analysis running…",
@@ -1395,12 +1415,21 @@ function applyState(raw: unknown) {
   } else if (state.status === "running") {
     // A genuine new run supersedes any transient idle outcome (reset/merge/error).
     if (!isStale) pendingIdleOutcome = null;
-    // Phase 0 (linter running): no phases pushed yet — the dashboard would be an
-    // empty "PHASE — OF 0" shell, so show a neutral busy idle screen until the
-    // first real phase state arrives.
-    const noPhasesYet = (!Array.isArray(state.phases) || state.phases.length === 0)
-      && (!state.currentPhase || state.currentPhase === 0);
-    if (noPhasesYet) {
+    // Stay on the early-run screen until a phase has ACTUALLY started — not merely
+    // until a phases array exists. The first phases push (Step 1.1) sends all phases
+    // "pending" with currentPhase 0; switching to the dashboard then shows an empty
+    // "Phase — of 5" shell with nothing active for the ~1-2s until Phase 1 flips to
+    // "running". So we hold the "analyzed/linting" screen while the run has no live
+    // phase and no progress yet, and only reveal the dashboard once something runs.
+    const phases = Array.isArray(state.phases) ? state.phases : [];
+    const anyPhaseActive = phases.some(
+      p => p.status === "running" || p.status === "completed" || p.status === "failed"
+    );
+    const hasProgress = (state.currentPhase ?? 0) >= 1
+      || (state.findingsFixed ?? 0) > 0
+      || (state.overallProgress ?? 0) > 0;
+    const notStartedYet = !anyPhaseActive && !hasProgress;
+    if (notStartedYet) {
       stopLiveTimer();
       renderIdle(state);
       lastStatus = state.status;

@@ -114,10 +114,21 @@ test("early-run stage is tracked then cleared once phases arrive", async (t) => 
   await client.callTool({ name: "update-status", arguments: { status: "running", stage: "linting" } });
   assert.equal((await get()).stage, "linting");
 
-  // Once the first non-empty phases array arrives, the server drops stage so it
-  // doesn't cling to the state for the rest of the run.
+  // After the linter, the skill pushes stage:"analyzed" while it builds the phases
+  // array — the dashboard shows "Linter analysis completed" instead of an empty shell.
+  await client.callTool({ name: "update-status", arguments: { status: "running", stage: "analyzed" } });
+  assert.equal((await get()).stage, "analyzed");
+
+  // The FIRST phases push sends every phase "pending" with currentPhase 0. stage must
+  // SURVIVE this so the dashboard can keep the early screen until a phase truly starts
+  // (otherwise the user sees an empty "Phase — of N" shell for ~1-2s).
+  await client.callTool({ name: "update-status", arguments: { status: "running", currentPhase: 0, phases: [{ id: 1, name: "P1", status: "pending" }, { id: 2, name: "P2", status: "pending" }] } });
+  assert.equal((await get()).stage, "analyzed", "stage survives a pending-only phases push");
+
+  // Once a phase actually starts (running + currentPhase 1), the server drops stage so
+  // the live phase view takes over.
   await client.callTool({ name: "update-status", arguments: { status: "running", currentPhase: 1, phases: [{ id: 1, name: "P1", status: "running" }] } });
-  assert.equal((await get()).stage, null, "stage cleared when phases exist");
+  assert.equal((await get()).stage, null, "stage cleared once a phase is running");
 });
 
 test("stop-status marks the run stopped while preserving progress", async (t) => {

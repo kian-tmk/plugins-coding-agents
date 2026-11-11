@@ -103,6 +103,12 @@ explizite Beispiele (echter Modellname, Datum im `YYYY-MM-DD`-Format) statt gene
 > Neueste zuerst. Ein Eintrag pro nennenswerter Plugin-Änderung.
 > Format: `### JJJJ-MM-TT — Titel`, darunter kurze Stichpunkte, gern mit Commit-Hash.
 
+### 2026-11-11 — Dashboard: Übergangs-Screen nach dem Linter
+
+- **Neuer Early-Stage `analyzed`** zwischen „linting" und dem ersten Phasen-Push. Der Workflow pusht ihn direkt nach dem Baseline-Linter; das Dashboard zeigt „Linter analysis completed — connecting dashboard…" statt ~1-2s relativ leer dazustehen, während die Phasen-JSON gebaut wird. Übergang danach lückenlos auf die Phasen-View (verifiziert).
+- state-schema: `stage`-Enum um `"analyzed"` erweitert; SKILL.md Step 1.1 pusht den Stage.
+- **Kein leeres Phasen-Gerüst mehr:** Das Dashboard wechselt erst auf die Running-View, wenn eine Phase **tatsächlich läuft** — nicht schon beim ersten (`pending`-only) Phasen-Push. Vorher sah man ~1-2s „Phase — of N" ohne aktive Phase, bis Phase 1 auf `running` kippte. Client (`applyState`/`renderIdle`): hält den Early-Screen, solange keine Phase running/completed/failed ist und kein Fortschritt existiert. Server (`writeState`): nullt `stage` erst bei einer aktiven Phase statt beim bloßen Vorhandensein des Arrays. Test für „stage überlebt pending-only / fällt bei running" ergänzt.
+
 ### 2026-11-11 — Stop-Button im Dashboard (graceful stop)
 
 - **Stop-Button** klein oben rechts im Dashboard-Header (laufender Lauf). Klick → Bestätigungs-**Popover** (`ui5-popover`, am Button verankert) mit „Stop"/„Cancel" statt `window.confirm` (im Desktop-iframe blockiert) → Lauf wird am nächsten sicheren Checkpoint beendet.
