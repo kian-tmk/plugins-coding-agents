@@ -316,6 +316,8 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 | Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
 | User stops the run early | Call the **`stop-status`** tool (optional `reason`) — do NOT push `status:"completed"`. Preserves remaining findings, phases and deferred issues on the end screen. |
 | Dashboard **Stop button** clicked | The server sets `stopRequested:true` (status stays `running`). You see it in the **return value of your next `update-status`** — then run the Stopping-early procedure below. |
+| Dashboard **Pause button** clicked | The server sets `pauseRequested:true` (status stays `running`). Check for it the same way as `stopRequested`. At the next safe checkpoint, call **`pause-status`** — this sets `status:"paused"` and clears `pauseRequested`. The run is now held; the user can resume or stop from the dashboard. |
+| User resumes a paused run | The dashboard **Resume button** opens a new Code chat with `/modernize-ui5-app` prefilled. When you receive that prompt, read the current state with `get-status` (status will be `"paused"`), then call `update-status` with `status:"running"` (this transitions paused→running in the server without resetting `startedAt`) and continue from the phase that was active when the run paused. |
 | User asks to reset/undo | Call the **`reset-app`** tool — discards uncommitted changes, switches back to original branch, resets dashboard to idle. Never do manual git checkout/branch -D. |
 | Run complete, clean (auto-merge) | Call the **`merge-app`** tool — merges work branch into original via `git merge --no-ff`. Do NOT merge manually. |
 
@@ -330,6 +332,30 @@ because **every `update-status` call returns the merged state** as its result: a
 push, check whether the returned object has `stopRequested === true` (or `status === "stopped"`,
 if a REST backup finalized it). If it does, the user clicked Stop — run the **Stopping early**
 procedure below **at the next checkpoint**.
+
+### Checking for a pause request (dashboard Pause button)
+
+The dashboard also has a **Pause button**. It works identically to Stop — the button sets
+`pauseRequested:true` and leaves `status:"running"`. Check for it the same way:
+
+```bash
+# check_pause: returns true if the run should pause
+check_pause() {
+  local returned_state="$1"
+  echo "$returned_state" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('pauseRequested') else 1)"
+}
+```
+
+At the next safe checkpoint, if `pauseRequested` is true: call **`pause-status`** to flip the
+status to `"paused"` and clear the flag. Then **stop working and end your turn** — no further
+pushes, no new tool calls. The state is preserved; when the user clicks Resume, the dashboard
+opens a new Code chat with `/modernize-ui5-app` prefilled and you pick up from where you left
+off (read `get-status`, check `status === "paused"`, then push `status:"running"` to resume
+and continue from the active phase).
+
+Pausing is safe at the same checkpoints as stopping: phase boundaries, after a sub-agent batch
+returns, before a commit. Never pause mid-file-edit. In non-interactive mode `pauseRequested`
+never appears — skip the check.
 
 - **Checkpoints** are the points where you already call `push_status`: phase start, after a
   sub-agent batch returns, before a commit, before a gate. At those points the tree is
