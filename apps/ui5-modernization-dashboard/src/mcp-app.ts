@@ -1088,98 +1088,21 @@ async function requestPause(state: ModernizationState) {
   setActionStatus("ok", message || "Pause requested — waiting for the agent to reach a safe point.");
 }
 
-// Build the claude://code/new URL for resuming the paused run. Opens a new Code
-// chat in the project folder with a prefilled prompt so the agent resumes cleanly.
-function buildResumeUrl(state: ModernizationState): string | null {
-  if (!state.projectPath) return null;
-  const phase = state.currentPhase ?? 0;
-  const branch = state.workBranch ?? "modernization branch";
-  const completedPhases = (state.phases ?? []).filter(p => p.status === "completed").length;
-  const prompt = [
-    "/modernize-ui5-app",
-    `The modernization of ${state.project || state.projectPath} was paused.`,
-    `Resume from phase ${phase} (${completedPhases} phase${completedPhases !== 1 ? "s" : ""} completed).`,
-    `The work branch is '${branch}'. Continue from where the run left off.`,
-  ].join("\n");
-  const url = new URL("claude://code/new");
-  url.searchParams.set("folder", state.projectPath);
-  url.searchParams.set("q", prompt);
-  return url.href;
-}
-
-// Resume from the paused screen. Opens claude://code/new with a prefilled resume
-// prompt so the agent can continue cleanly. Uses app.openLink in Desktop (MCP widget)
-// mode; falls back to a REST call that invokes /usr/bin/open in CLI mode.
-async function resumeRun(state: ModernizationState) {
-  const url = buildResumeUrl(state);
-  if (!url) {
-    setIdleMessage({
-      title: "Cannot resume",
-      subtitle: "No project path recorded — open a Code chat and type /modernize-ui5-app to continue.",
-      variant: "warning",
-      illustration: "BeforeSearch",
-      headerIcon: "alert",
-      hint: false,
-    });
-    return;
-  }
-
-  if (!standaloneMode) {
-    // Desktop / MCP widget: use the bridge to open the URL in the host.
-    try {
-      const result = await app.openLink({ url }) as any;
-      if (result?.isError) {
-        setIdleMessage({
-          title: "Could not open chat",
-          subtitle: "The host blocked the link. Open a Code chat and paste the resume prompt manually.",
-          variant: "warning",
-          illustration: "BeforeSearch",
-          headerIcon: "alert",
-          hint: false,
-        });
-      }
-    } catch {
-      setIdleMessage({
-        title: "Could not open chat",
-        subtitle: "Opening the resume link failed. Open a Code chat in the project and type /modernize-ui5-app.",
-        variant: "warning",
-        illustration: "BeforeSearch",
-        headerIcon: "alert",
-        hint: false,
-      });
-    }
-    return;
-  }
-
-  // CLI / standalone mode: ask the server to call open(1) on macOS.
-  try {
-    const res = await fetch("http://localhost:3001/api/resume", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-      signal: AbortSignal.timeout(ACTION_TIMEOUT_MS),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data?.ok === false) {
-      setIdleMessage({
-        title: "Could not open chat",
-        subtitle: data?.message || "Resume failed. Open a Code chat in the project and type /modernize-ui5-app.",
-        variant: "warning",
-        illustration: "BeforeSearch",
-        headerIcon: "alert",
-        hint: false,
-      });
-    }
-  } catch {
-    setIdleMessage({
-      title: "Could not open chat",
-      subtitle: "Resume failed. Open a Code chat in the project and type /modernize-ui5-app.",
-      variant: "warning",
-      illustration: "BeforeSearch",
-      headerIcon: "alert",
-      hint: false,
-    });
-  }
+// Resume from the paused screen. PLACEHOLDER for now: a widget cannot start a new
+// agent turn on its own (same IPC limit as Stop), so until the resume skill lands this
+// only tells the user to continue the run from the chat. Wiring a resumeRequested
+// signal + the resume skill is a follow-up.
+function resumeRun(_state: ModernizationState) {
+  setIdleMessage({
+    title: "Resume from the chat",
+    subtitle: "Tell the agent to continue the modernization in the chat (e.g. “continue”). "
+      + "A one-click resume from here is coming with the resume skill.",
+    variant: "neutral",
+    illustration: "BeforeSearch",
+    headerIcon: "play",
+    iconBlue: true,
+    hint: false,
+  });
 }
 
 // Stop from the paused screen — end the run for good via stop-status (preserves
@@ -1403,7 +1326,7 @@ function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>)
     // State 5 — Merge success. Illustration KeyTask, combine icon (blue).
     return {
       title: "Successfully merged and cleaned up",
-      subtitle: `"${outcome.workBranch}" was merged into "${outcome.originalBranch}". The dashboard has been reset.`,
+      subtitle: `“${outcome.workBranch}” was merged into “${outcome.originalBranch}”. The dashboard has been reset.`,
       variant: "success",
       illustration: "KeyTask",
       headerIcon: "combine",
@@ -1414,7 +1337,7 @@ function outcomeMessage(outcome: NonNullable<ModernizationState["lastOutcome"]>)
   // State 4 — Reset success. Illustration ReloadScreen, sys-enter-2 icon (green).
   return {
     title: "App is back to its original state",
-    subtitle: `Reset to "${outcome.originalBranch}". Your modernization is kept as a backup on branch "${outcome.workBranch}".`,
+    subtitle: `Reset to “${outcome.originalBranch}”. Your modernization is kept as a backup on branch “${outcome.workBranch}”.`,
     variant: "success",
     illustration: "ReloadScreen",
     headerIcon: "sys-enter-2",
@@ -1489,7 +1412,7 @@ function renderIdle(state: ModernizationState | null): void {
     setIdleMessage({
       title: `Run from ${started} interrupted`,
       subtitle: canReset
-        ? `The run is stuck on "${state.workBranch}". Reset to "${state.originalBranch}" to clean up — or restart the agent to continue.`
+        ? `The run is stuck on “${state.workBranch}”. Reset to “${state.originalBranch}” to clean up — or restart the agent to continue.`
         : "The run appears interrupted. No backup branch recorded.",
       variant: "warning",
       illustration: "BeforeSearch",

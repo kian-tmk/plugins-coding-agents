@@ -228,27 +228,6 @@ async function startStreamableHTTPServer(
     res.status(result.ok ? 200 : 409).json(result);
   });
 
-  // REST API: open the resume URL in Claude Desktop. Used by the CLI-mode Resume
-  // button since the widget can't open deep links via the MCP bridge there.
-  // Expects { url: "claude://code/new?..." } in the request body.
-  app.post("/api/resume", async (req: Request, res: Response) => {
-    const url = typeof req.body?.url === "string" ? req.body.url : null;
-    if (!url || !url.startsWith("claude://")) {
-      res.status(400).json({ ok: false, message: "Missing or invalid url" });
-      return;
-    }
-    if (process.platform !== "darwin") {
-      res.status(409).json({ ok: false, message: "Resume via deep link is only supported on macOS." });
-      return;
-    }
-    try {
-      await execFileAsync("/usr/bin/open", [url]);
-      res.json({ ok: true });
-    } catch (err) {
-      res.status(500).json({ ok: false, message: `open failed: ${(err as Error).message}` });
-    }
-  });
-
   app.all("/mcp", async (req: Request, res: Response) => {
     const server = factory();
     const transport = new NodeStreamableHTTPServerTransport({
