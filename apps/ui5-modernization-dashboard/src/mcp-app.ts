@@ -57,6 +57,7 @@ import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Tools.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/tnt/Settings.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/NoTasks.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/BeforeSearch.js";
+import "@ui5/webcomponents-fiori/dist/illustrations/Connection.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/ReloadScreen.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/KeyTask.js";
 import "@ui5/webcomponents-fiori/dist/illustrations/NoData.js";
@@ -65,6 +66,7 @@ import "@ui5/webcomponents-icons/dist/process.js";
 import "@ui5/webcomponents-icons/dist/accept.js";
 import "@ui5/webcomponents-icons/dist/alert.js";
 import "@ui5/webcomponents-icons/dist/error.js";
+import "@ui5/webcomponents-icons/dist/information.js";
 import "@ui5/webcomponents-icons/dist/document.js";
 import "@ui5/webcomponents-icons/dist/document-text.js";
 import "@ui5/webcomponents-icons/dist/task.js";
@@ -78,6 +80,7 @@ import "@ui5/webcomponents-icons/dist/stop.js";
 import "@ui5/webcomponents-icons/dist/pause.js";
 import "@ui5/webcomponents-icons/dist/play.js";
 import "@ui5/webcomponents-icons/dist/detail-view.js";
+import "@ui5/webcomponents-icons/dist/quality-issue.js";
 
 // Standalone / fallback default: dark. Overridden by handleHostContext on MCP connect.
 // Must come AFTER all registerThemePropertiesLoader calls so the theme can resolve.
@@ -155,6 +158,7 @@ interface ModernizationState {
   completedAt: string | null;
   stoppedAt: string | null;
   stopReason: string | null;
+  stopNote: string | null;
   stopRequested: boolean | null;
   pauseRequested: boolean | null;
   phaseStartedAt: string | null;
@@ -588,10 +592,11 @@ function renderGateRow(p: PhaseState): string {
 }
 
 function renderCompleted(state: ModernizationState) {
+  const endTime = state.stoppedAt ?? state.completedAt ?? null;
   const elapsedSec = (state.elapsedSeconds && state.elapsedSeconds > 0)
     ? state.elapsedSeconds
-    : (state.startedAt && state.completedAt)
-      ? Math.round((new Date(state.completedAt).getTime() - new Date(state.startedAt).getTime()) / 1000)
+    : (state.startedAt && endTime)
+      ? Math.round((new Date(endTime).getTime() - new Date(state.startedAt).getTime()) / 1000)
       : (state.startedAt ? Math.round((Date.now() - new Date(state.startedAt).getTime()) / 1000) : 0);
   const elapsed = formatElapsed(elapsedSec);
   const commits = state.phases.filter((p) => p.commit).length;
@@ -618,16 +623,16 @@ function renderCompleted(state: ModernizationState) {
   statsEl.innerHTML = `
     <ui5-card class="completed-stat">
       <div class="completed-stat-inner">
-        <ui5-icon name="task" class="completed-stat-icon"></ui5-icon>
+        <ui5-icon name="${stopped ? "quality-issue" : "task"}" class="completed-stat-icon ${stopped && remaining > 0 ? "warning" : stopped ? "" : "positive"}"></ui5-icon>
         <div>
-          <div class="completed-stat-value ${stopped ? "" : "positive"}">${stopped ? remaining : baseline}</div>
+          <div class="completed-stat-value ${stopped && remaining > 0 ? "warning" : stopped ? "" : "positive"}">${stopped ? remaining : baseline}</div>
           <div class="completed-stat-label">${stopped ? "findings remaining" : "findings resolved"}</div>
         </div>
       </div>
     </ui5-card>
     ${stopped ? `<ui5-card class="completed-stat">
       <div class="completed-stat-inner">
-        <ui5-icon name="accept" class="completed-stat-icon"></ui5-icon>
+        <ui5-icon name="accept" class="completed-stat-icon positive"></ui5-icon>
         <div>
           <div class="completed-stat-value positive">${fixed}</div>
           <div class="completed-stat-label">findings resolved</div>
@@ -657,13 +662,25 @@ function renderCompleted(state: ModernizationState) {
   // keep the slot="headerRow" child, replace only the body rows)
   const phasesEl = document.getElementById("completed-phases")!;
   phasesEl.querySelectorAll("ui5-table-row").forEach((r) => r.remove());
+  // For a stopped run, a phase that was mid-flight has findingsAfter=null.
+  // If it's the only running phase and the top-level findingsFixed is known,
+  // derive a best-effort fixed count so the row isn't blank.
+  const runningPhases = state.phases.filter(p => p.status === "running");
+  const topFixed = state.findingsFixed ?? 0;
   const rowsHtml = state.phases.map((p) => {
-    const fixed = (p.findingsBefore ?? 0) - (p.findingsAfter ?? 0);
+    let effectiveAfter = p.findingsAfter;
+    if (effectiveAfter == null && p.status === "running" && runningPhases.length === 1
+        && p.findingsBefore != null && topFixed > 0) {
+      effectiveAfter = p.findingsBefore - topFixed;
+    }
+    const fixed = (p.findingsBefore != null && effectiveAfter != null)
+      ? p.findingsBefore - effectiveAfter
+      : null;
     const dur = p.durationSeconds != null ? formatElapsed(p.durationSeconds) : "—";
     const row = `<ui5-table-row>
       <ui5-table-cell>${p.id}</ui5-table-cell>
       <ui5-table-cell>${escapeHtml(p.name)}</ui5-table-cell>
-      <ui5-table-cell>${fixed > 0 ? `<span class="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${fixed != null && fixed > 0 ? `<span class="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${p.filesChanged != null ? `${p.filesChanged} files` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${p.commit ? `<span class="hash">${escapeHtml(p.commit)}</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${dur}</ui5-table-cell>
@@ -671,6 +688,16 @@ function renderCompleted(state: ModernizationState) {
     return row + renderGateRow(p);
   }).join("");
   phasesEl.insertAdjacentHTML("beforeend", rowsHtml);
+
+  // Stop reason note — shown below phase summary only for stopped runs with a reason
+  const stopNoteEl = document.getElementById("stop-reason-note") as HTMLElement;
+  const stopNoteTextEl = document.getElementById("stop-reason-text");
+  if (stopped && state.stopNote && state.stopNote.trim() && stopNoteEl && stopNoteTextEl) {
+    stopNoteTextEl.textContent = state.stopNote.trim();
+    stopNoteEl.style.display = "";
+  } else if (stopNoteEl) {
+    stopNoteEl.style.display = "none";
+  }
 
   // Deferred issues
   const issues = state.deferredIssues ?? [];
@@ -1192,6 +1219,7 @@ interface IdleMessageOpts {
   headerIcon?: string;     // ui5-icon name shown left of the title
   iconBlue?: boolean;      // force the header icon blue regardless of variant colour
   action?: { label: string; icon?: string; onClick: () => void };
+  loading?: "title" | "subtitle"; // animate dots in title or subtitle
 }
 
 function setIdleMessage(opts: IdleMessageOpts): void;
@@ -1203,10 +1231,27 @@ function setIdleMessage(a: string | IdleMessageOpts, b?: string): void {
   const variant: IdleVariant = opts.variant ?? "neutral";
 
   const titleEl = document.getElementById("idle-title-text");
-  if (titleEl) titleEl.textContent = opts.title;
+  if (titleEl) {
+    const titleText = opts.loading === "title"
+      ? opts.title.replace(/\.{3}|…$/, "") + '<span class="dot-pulse"><span>.</span><span>.</span><span>.</span></span>'
+      : opts.title;
+    titleEl.innerHTML = titleText;
+  }
   const illus = document.getElementById("idle-illustration");
   if (illus) {
-    illus.setAttribute("subtitle-text", opts.subtitle);
+    if (opts.loading === "subtitle") {
+      illus.removeAttribute("subtitle-text");
+      let subSlot = illus.querySelector<HTMLElement>("[slot='subtitle']");
+      if (!subSlot) {
+        subSlot = document.createElement("span");
+        subSlot.setAttribute("slot", "subtitle");
+        illus.appendChild(subSlot);
+      }
+      subSlot.innerHTML = opts.subtitle.replace(/\.{3}|…$/, "") + '<span class="dot-pulse"><span>.</span><span>.</span><span>.</span></span>';
+    } else {
+      illus.querySelector("[slot='subtitle']")?.remove();
+      illus.setAttribute("subtitle-text", opts.subtitle);
+    }
     if (opts.illustration) illus.setAttribute("name", opts.illustration);
   }
 
@@ -1340,7 +1385,7 @@ function renderIdle(state: ModernizationState | null): void {
       title: "Paused",
       subtitle: "The modernization is paused at a safe point. Resume to continue, or stop the run.",
       variant: "warning",
-      illustration: "BeforeSearch",
+      illustration: "Connection",
       headerIcon: "pause",
       hint: false,
     });
@@ -1406,6 +1451,7 @@ function renderIdle(state: ModernizationState | null): void {
         illustration: "tnt/Settings",
         headerIcon: "sys-enter-2",
         iconBlue: true,
+        loading: "subtitle",
         hint: false,
       });
     } else if (state.stage === "linting") {
@@ -1417,6 +1463,7 @@ function renderIdle(state: ModernizationState | null): void {
         illustration: "tnt/Settings",
         headerIcon: "developer-settings",
         iconBlue: true,
+        loading: "title",
         hint: false,
       });
     } else {

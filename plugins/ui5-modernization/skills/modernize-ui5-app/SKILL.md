@@ -391,7 +391,10 @@ wipes the dashboard to idle and loses the stop context). Do exactly this, in ord
 2. Do **not** commit the current phase if you are mid-step — partial edits stay uncommitted on
    the `workBranch`, which is fine: the user's original branch is the backup and the dashboard
    reset handles cleanup.
-3. Call the **`stop-status`** MCP tool with a short `reason` (e.g. `{"reason":"Stopped by user from dashboard"}`). This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
+3. Call the **`stop-status`** MCP tool with:
+   - `reason`: a short label shown in the subtitle (e.g. `"Stopped by user"`).
+   - `note`: 1–3 sentences of plain prose describing the state at stop time — which phase was active, whether changes were committed or are still uncommitted on the work branch, and what phases were not started. This text is shown verbatim below the phase summary in the dashboard. Example: `"The run was stopped during Phase 1 (Mechanical Baseline). The autofix resolved 12 findings but the phase had not yet committed — the changes are on the work branch as uncommitted edits. Phases 2–6 were not started."`
+   This sets `status:"stopped"` while preserving remaining findings, completed phases and deferred issues, so the dashboard shows the "Modernization Stopped" end screen with that data — and the reset button (because `originalBranch`/`workBranch` are already in the state).
 4. Tell the user the run is stopped, which branch the work is on (`workBranch`), and that they can reset to `originalBranch` from the dashboard or by asking you.
 
 Never push `status:"completed"` or `status:"idle"` for a user stop. It is fire-and-forget like the other pushes.

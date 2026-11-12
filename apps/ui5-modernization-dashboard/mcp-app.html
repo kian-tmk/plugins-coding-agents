@@ -178,6 +178,12 @@
             </ui5-table>
           </ui5-card>
 
+          <!-- Stop reason note (only shown for stopped runs) -->
+          <div class="stop-reason-note" id="stop-reason-note" style="display:none">
+            <ui5-icon name="information" class="stop-reason-icon"></ui5-icon>
+            <p id="stop-reason-text"></p>
+          </div>
+
           <!-- Deferred issues -->
           <ui5-card class="completed-section" id="section-issues" style="display:none">
             <ui5-card-header title-text="Deferred for manual review">

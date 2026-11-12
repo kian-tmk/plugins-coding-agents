@@ -488,13 +488,16 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
         "Call this (instead of pushing status:\"completed\") when the user asks to stop/abort the run. " +
         "The existing state is preserved — remaining findings, phases and deferred issues stay visible on the end screen. " +
         "Pass an optional free-text reason shown on the dashboard.",
-      inputSchema: z.object({ reason: z.string().optional() }),
+      inputSchema: z.object({
+        reason: z.string().optional(),
+        note: z.string().optional().describe("1–3 sentence description of the state at stop time — which phase was active, whether changes were committed, what remains. Shown below the phase summary in the dashboard. Plain prose, no markdown."),
+      }),
       outputSchema: stateSchema,
     },
-    async (args: { reason?: string }): Promise<CallToolResult> => {
+    async (args: { reason?: string; note?: string }): Promise<CallToolResult> => {
       // Keep stopRequested true for consistency: the agent (or a reloaded UI) should
       // see a single coherent "the user asked to stop" signal alongside the terminal state.
-      const merged = await writeState(stateFile, { status: "stopped", stopReason: args.reason ?? null, stopRequested: true });
+      const merged = await writeState(stateFile, { status: "stopped", stopReason: args.reason ?? null, stopNote: args.note ?? null, stopRequested: true });
       return {
         content: [{ type: "text", text: `Modernization stopped${args.reason ? `: ${args.reason}` : ""}.` }],
         structuredContent: merged,

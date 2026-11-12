@@ -32,6 +32,7 @@ export const stateSchema = z.object({
   completedAt: z.string().nullable().describe("Server-managed completion time; omit from updates."),
   stoppedAt: z.string().nullable().describe("Server-managed stop time; omit from updates."),
   stopReason: z.string().nullable().describe("Free-text reason why the run was stopped early."),
+  stopNote: z.string().nullable().describe("1–3 sentence description of the state at stop time — which phase was active, whether changes were committed, what remains. Shown below the phase summary in the dashboard. Plain prose, no markdown."),
   stopRequested: z.boolean().nullable().describe(
     "Set true by the dashboard Stop button (request-stop) while the run is still running. "
     + "The agent reads it back from update-status and stops at the next checkpoint, then calls "
