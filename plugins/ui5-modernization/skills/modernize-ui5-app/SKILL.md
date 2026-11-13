@@ -215,6 +215,42 @@ if [ "$DASHBOARD" != "false" ] && [ ! -f "$DASHBOARD_DIR/dist-server/main.js" ];
 fi
 ```
 
+#### Step 2b: Ensure the dashboard MCP server is registered — CLI only
+
+**This step applies ONLY when `DASHBOARD_HOST=cli`.** Skip it for Desktop — there the `setup-desktop-dashboard` launchd worker (Step 0D) handles registration, because the agent cannot edit `claude_desktop_config.json` itself.
+
+Status in the CLI is pushed through the **`update-status` MCP tool** on the `ui5-modernization-dashboard` server — exactly as in Desktop (there is no HTTP/curl push). So that MCP server **must** be registered in the CLI, or every `update-status`/`get-status`/`resume-app` call fails and the dashboard never updates. Unlike Desktop (launchd worker) and unlike the HTTP server (Step 3, started per-run), **the agent registers this stdio MCP server itself**, once, with `claude mcp add`.
+
+**This is deliberately NOT done via the plugin `.mcp.json`.** A dashboard entry there would create a duplicate registration (plugin + the user-scope entry) → two server PIDs → silently broken Desktop widget rendering (see the "Why two servers?" note above and ARCHITECTURE.md). The plugin `.mcp.json` registers only `chrome-devtools`.
+
+Check for any already-registered `ui5-modernization-*` MCP server; register one only if none exists. Idempotent — never add a second entry.
+
+```bash
+if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
+  # Any server whose name starts with ui5-modernization- already provides the tools.
+  if claude mcp list 2>/dev/null | grep -qE '^ui5-modernization-'; then
+    echo "✅ Dashboard MCP server already registered."
+  else
+    # Prefer the plugin-delivered, self-contained bundle; fall back to the dev build.
+    # (Resolve the same way as Step 1 — CLAUDE_PLUGIN_ROOT is not reliably set here.)
+    MCP_SERVER_JS="$DASHBOARD_DIR/dist-server/main.js"
+    PLUGIN_SERVER_JS="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/ui5-modernization/dashboard/dist-server/main.js"
+    [ -f "$PLUGIN_SERVER_JS" ] && MCP_SERVER_JS="$PLUGIN_SERVER_JS"
+    if [ -f "$MCP_SERVER_JS" ]; then
+      claude mcp add ui5-modernization-dashboard -s user -- node "$MCP_SERVER_JS" --stdio \
+        && echo "✅ Registered dashboard MCP server (takes effect on the next Claude session)." \
+        || echo "⚠ Could not register the dashboard MCP server — status pushes may fail until it is added."
+    else
+      echo "⚠ Dashboard server bundle not found — cannot register the MCP server."
+    fi
+  fi
+fi
+```
+
+**IMPORTANT:**
+- A freshly added MCP server loads at **session startup**, so a registration done in *this* session only takes effect in the *next* one. If `ui5-modernization-*` was missing and you just added it, tell the user: the dashboard will be fully wired from the next Claude session; this run still pushes status best-effort (and a failed push never aborts the run). Do not loop trying to call the tool in this session if it was not already present.
+- Never register the dashboard server in the plugin `.mcp.json`. Never add a second `ui5-modernization-*` entry.
+
 #### Step 3: Start the HTTP server — CLI only
 
 The HTTP server on :3001 serves the **browser** view and is started **only in the CLI case**. In the desktop case the dashboard MCP server is already loaded by the host (stdio) and binding a port is blocked by the sandbox — so skip the server start entirely; status flows through the `update-status` MCP tool and the widget reads it via `get-status`.

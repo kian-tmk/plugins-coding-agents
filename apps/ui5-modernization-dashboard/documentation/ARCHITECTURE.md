@@ -221,11 +221,14 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 ### Modernisierung starten (CLI)
 
 1. User startet `modernize-ui5-app`-Skill in Claude Code CLI.
-2. Workflow erstellt Work-Branch, ruft `update-status` mit Preflight-Daten (Projekt, UI5-Version, Baseline-Findings, Branch-Namen).
-3. Dashboard-Server startet auf `:3001`, öffnet Browser. Die UI pollt `/api/status` alle 1,5 s.
-4. Pro Phase: Workflow ruft Skills, committet, pusht `update-status` mit Phasen-Fortschritt. Dashboard zeigt Live-Timer, Stepper, Finding-Zähler.
-5. Nach jeder Phase: Verification Gate (Tests). Ergebnis wird als `gateStatus`/`gateTestsPassed`/`gateTestsTotal` gepusht.
-6. Am Ende: `status:"completed"` + `deferredIssues`. Completed-Screen zeigt Phasen-Summary, Report-/Issues-Links.
+2. **MCP-Registrierung (einmalig, agentengesteuert):** Findet der Agent keinen `ui5-modernization-*` MCP-Server, registriert er den stdio-Server selbst — `claude mcp add ui5-modernization-dashboard -s user -- node <bundle>/dist-server/main.js --stdio` (bevorzugt die plugin-ausgelieferte Kopie, sonst der Dev-Build). **Nicht** über die Plugin-`.mcp.json` (Duplikat bricht das Desktop-Widget). Greift ab der nächsten Session; dieser Lauf pusht best-effort. Anders als Desktop gibt es in der CLI keinen launchd-Worker — der Agent trägt den Server selbst ein.
+3. Workflow erstellt Work-Branch, ruft `update-status` mit Preflight-Daten (Projekt, UI5-Version, Baseline-Findings, Branch-Namen).
+4. HTTP-Server startet auf `:3001`, öffnet Browser. Die UI pollt `/api/status` alle 1,5 s.
+5. Pro Phase: Workflow ruft Skills, committet, pusht `update-status` mit Phasen-Fortschritt. Dashboard zeigt Live-Timer, Stepper, Finding-Zähler.
+6. Nach jeder Phase: Verification Gate (Tests). Ergebnis wird als `gateStatus`/`gateTestsPassed`/`gateTestsTotal` gepusht.
+7. Am Ende: `status:"completed"` + `deferredIssues`. Completed-Screen zeigt Phasen-Summary, Report-/Issues-Links.
+
+> **Zwei Server-Rollen in der CLI (nicht verwechseln):** (1) der **HTTP-Server** auf `:3001` (`node main.js`, vom Skill pro Lauf gestartet) liefert nur die Browser-Seite; (2) der **stdio-MCP-Server** `ui5-modernization-dashboard` (`node main.js --stdio`, einmalig per `claude mcp add` registriert) liefert die Tools, die der Agent aufruft (`update-status`, `get-status`, `resume-app`, …). Der Status-Push läuft in der CLI wie im Desktop über `update-status` (MCP), daher ist Rolle 2 zwingend registriert — sonst bleibt das Dashboard stumm.
 
 ### Modernisierung starten (Claude Code Desktop)
 
@@ -338,6 +341,12 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-13 — CLI: Agent registriert den MCP-Server selbst (Step 2b)
+
+- **Problem:** In der CLI war der `ui5-modernization-dashboard`-MCP-Server nur **einmal manuell** eingetragen (`claude mcp add -s user`, auf den Dev-Pfad zeigend). Bei einer frischen Plugin-Installation fehlt der Eintrag → der Agent kann `update-status`/`get-status`/`resume-app` nicht aufrufen, das Dashboard bleibt stumm. Bewusst **nicht** in der Plugin-`.mcp.json` (Duplikat = zwei PIDs = Desktop-Widget bricht). Desktop löst das über den launchd-Worker (`setup-desktop-dashboard`); die CLI hatte kein Pendant.
+- **Fix (`SKILL.md`, neuer Step 2b, nur CLI):** Findet der Agent keinen `ui5-modernization-*`-MCP-Server (`claude mcp list`), registriert er ihn selbst — `claude mcp add ui5-modernization-dashboard -s user -- node <bundle>/dist-server/main.js --stdio`. Pfad wie in Step 1 aufgelöst (bevorzugt die plugin-ausgelieferte Kopie `plugins/ui5-modernization/dashboard/dist-server/main.js`, sonst der Dev-Build); `CLAUDE_PLUGIN_ROOT` ist im Agent-Shell nicht verlässlich gesetzt, daher per Dateisystem-Probe. Idempotent (nie ein zweiter Eintrag). Greift ab der **nächsten** Session; der laufende Push bleibt best-effort.
+- **Klarstellung der zwei CLI-Server-Rollen** im Szenario „Modernisierung starten (CLI)": HTTP-Server (:3001, nur Browser-Seite) vs. stdio-MCP-Server (die Tools).
 
 ### 2026-11-13 — One-Click-Resume für pausierte Läufe (CLI)
 
