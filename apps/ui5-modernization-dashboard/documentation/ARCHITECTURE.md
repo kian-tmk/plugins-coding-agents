@@ -54,7 +54,7 @@ Die UI ist eine **MCP App** — sie nutzt das `@modelcontextprotocol/ext-apps` S
 
 **Fullscreen** ist im Code bereit (`toggleFullscreen`, `syncFullscreenButtons`), aber die Buttons sind nicht im HTML — blockiert durch 3P Feature-Gate `513873720` (`epitaxyMcpAppPane`). Ohne Gate liefert der Host `availableDisplayModes: ["inline"]`. Kommentar im Code dokumentiert Wiederaktivierung.
 
-**Standalone-Fallback:** Wenn `app.connect()` fehlschlägt (Browser, kein MCP-Host), fällt die UI auf REST-Polling zurück (`/api/status` alle 1,5 s). Markdown-Dateien werden über `/files/:filename` statt `get-file` geladen.
+**Standalone-Fallback:** Wenn `app.connect()` fehlschlägt (Browser, kein MCP-Host), fällt die UI auf REST-Polling zurück (`/api/status` alle 0,6 s — im Browser gibt es keinen Push, daher engeres Intervall). Markdown-Dateien werden über `/files/:filename` statt `get-file` geladen.
 
 ## Verzeichnis-Layout
 
@@ -170,7 +170,7 @@ Eine Single-Page-App mit drei HTML-Screens, umgeschaltet nach `state.status`:
 
 Gebaut mit **UI5 Web Components** (`@ui5/webcomponents`, `-fiori`, `-icons`). Gezielte Imports, kein `Assets.js`. Themes (`sap_horizon`/`sap_horizon_dark`) per `registerThemePropertiesLoader`, umgeschaltet nach Host-Context. Responsive Layout (CSS-Media-Queries, Breakpoints 700px/500px).
 
-**Polling:** Alle 1,5 s — per `app.callServerTool("get-status")` im MCP-Modus, per `fetch("/api/status")` im Standalone-Modus. Zusätzlich empfängt die UI im MCP-Modus jeden `update-status`-Aufruf sofort über `app.ontoolresult` (Push, nicht Poll).
+**Polling:** Mode-abhängig — **0,6 s im Standalone-Modus** (`fetch("/api/status")`; dort gibt es keinen Push, der Poll ist der einzige Update-Kanal, und der Datei-Read ist mit ~1–6 ms billig), **1,5 s im MCP-Modus** (`app.callServerTool("get-status")`; nur Heartbeat). Zusätzlich empfängt die UI im MCP-Modus jeden `update-status`-Aufruf sofort über `app.ontoolresult` (Push, nicht Poll) — deshalb braucht der MCP-Poll kein enges Intervall. Konstanten: `POLL_DELAY_STANDALONE_MS`/`POLL_DELAY_MCP_MS`; die Backoff-Logik setzt via `healthyPollDelay()` auf den modus-korrekten Wert zurück.
 
 **Eager pre-fetch:** Beim Laden holt die UI per `fetch("/api/status")` sofort den State, noch bevor `app.connect()` abgeschlossen ist — so sieht der Nutzer den aktuellen Screen ohne Wartezeit auf den MCP-Handshake.
 
@@ -192,7 +192,7 @@ modernize-ui5-app Skill (Agent, läuft in der Ziel-App)
    │ Git-Polling (5 s, nur HTTP-Modus)         geteilt über Sandbox-Grenzen)
    │
 HTTP-Server :3001                      stdio-Server (Desktop, --stdio)
-   │ /api/status (1,5 s Poll)                 │ get-status (1,5 s Poll)
+   │ /api/status (0,6 s Poll)                 │ get-status (1,5 s Poll)
    ▼                                          │ + app.ontoolresult (Push bei
 Browser-Dashboard                              │   jedem update-status-Aufruf)
 (Standalone-Modus)                             ▼
@@ -223,7 +223,7 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 1. User startet `modernize-ui5-app`-Skill in Claude Code CLI.
 2. **MCP-Registrierung (einmalig, agentengesteuert):** Findet der Agent keinen `ui5-modernization-*` MCP-Server, registriert er den stdio-Server selbst — `claude mcp add ui5-modernization-dashboard -s user -- node <bundle>/dist-server/main.js --stdio` (bevorzugt die plugin-ausgelieferte Kopie, sonst der Dev-Build). **Nicht** über die Plugin-`.mcp.json` (Duplikat bricht das Desktop-Widget). Da die CLI **kein** MCP-Hot-Reload hat (`/mcp` lädt keine neuen Server, `/reload-plugins` nur Plugin-gebündelte), ist der frisch registrierte Server in *dieser* Session noch nicht verbunden. Der Agent **relauncht** deshalb automatisch: er spawnt via `osascript` ein neues Terminal mit einer Fortsetzungs-Session (`claude "<Skill neu starten>"`, Dashboard-Frage auto-bejaht) und beendet die aktuelle. Die frische Session lädt den Server beim Start → Dashboard verbunden. Nur beim allerersten Lauf nach frischer Installation; danach ist der Server dauerhaft registriert und der Relaunch entfällt. Desktop braucht das nicht — dort erledigt der launchd-Worker (`setup-desktop-dashboard`) die Registrierung.
 3. Workflow erstellt Work-Branch, ruft `update-status` mit Preflight-Daten (Projekt, UI5-Version, Baseline-Findings, Branch-Namen).
-4. HTTP-Server startet auf `:3001`, öffnet Browser. Die UI pollt `/api/status` alle 1,5 s.
+4. HTTP-Server startet auf `:3001`, öffnet Browser. Die UI pollt `/api/status` alle 0,6 s (Browser hat keinen Push).
 5. Pro Phase: Workflow ruft Skills, committet, pusht `update-status` mit Phasen-Fortschritt. Dashboard zeigt Live-Timer, Stepper, Finding-Zähler.
 6. Nach jeder Phase: Verification Gate (Tests). Ergebnis wird als `gateStatus`/`gateTestsPassed`/`gateTestsTotal` gepusht.
 7. Am Ende: `status:"completed"` + `deferredIssues`. Completed-Screen zeigt Phasen-Summary, Report-/Issues-Links.
@@ -341,6 +341,12 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-13 — Browser-Poll auf 0,6 s (mode-abhängig)
+
+- **Hintergrund:** Im Browser/Standalone-Modus gibt es **keinen** Push — `app.ontoolresult` existiert nur im Desktop/MCP-Bridge-Pfad. Updates kamen also nur über den 1,5-s-Poll an → sichtbarer Verzug von gefühlt 1–2 s gegenüber dem Agent-Chat.
+- **Fix (`src/mcp-app.ts`):** Poll-Intervall mode-abhängig gemacht: `POLL_DELAY_STANDALONE_MS = 600` (Browser), `POLL_DELAY_MCP_MS = 1500` (Desktop, da der Push ohnehin sofort trägt). Neuer Helper `healthyPollDelay()` liefert den modus-korrekten Wert; alle vormals auf `1500` hartcodierten Backoff-Resets (`reconnect()`, `poll()`-Erfolgszweig) nutzen ihn jetzt, damit ein Reconnect nicht auf 1,5 s zurückspringt. `/api/status` kostet ~1–6 ms, 0,6 s ist also unkritisch.
+- **Desktop unverändert** bei 1,5 s — der `update-status`-Push macht engeres Pollen dort überflüssig.
 
 ### 2026-11-13 — CLI: Agent registriert den MCP-Server selbst (Step 2b)
 

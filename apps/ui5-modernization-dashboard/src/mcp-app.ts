@@ -1743,10 +1743,21 @@ async function fetchRestStatus(): Promise<ModernizationState | null> {
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 
+// Base poll cadence. In standalone/browser (CLI) mode there is NO push channel —
+// app.ontoolresult only fires in the Desktop/MCP bridge — so the poll is the only
+// way updates reach the page; a tighter interval makes the browser feel live (the
+// request is a cheap local file read). In Desktop the bridge pushes every
+// update-status instantly, so the poll is just a heartbeat and can stay relaxed.
+const POLL_DELAY_STANDALONE_MS = 600;
+const POLL_DELAY_MCP_MS = 1500;
+// The healthy (non-backoff) delay for the current mode. standaloneMode is only set
+// true later (in the connect().catch branch), so this is read at each reset, not cached.
+const healthyPollDelay = () => (standaloneMode ? POLL_DELAY_STANDALONE_MS : POLL_DELAY_MCP_MS);
+
 let polling = false;
 let connectionLost = false;   // Desktop MCP bridge went dead; poll() drives a reconnect.
 let reconnecting = false;     // guard so only one reconnect runs at a time.
-let pollDelay = 1500;         // backs off while the connection is down.
+let pollDelay = POLL_DELAY_MCP_MS;  // backs off while the connection is down; reset via healthyPollDelay().
 
 // Show a small, honest connection indicator. In standalone (CLI) mode the bridge
 // cannot "die" the same way, so this is primarily for the Desktop widget.
@@ -1769,7 +1780,7 @@ async function reconnect() {
   try {
     await app.connect();
     connectionLost = false;
-    pollDelay = 1500;
+    pollDelay = healthyPollDelay();
     setConnectionStatus("ok");
     if (!polling) startPolling();
   } catch {
@@ -1805,7 +1816,7 @@ async function poll() {
         { signal: AbortSignal.timeout(5000) },
       );
       applyState(result.structuredContent);
-      if (connectionLost) { connectionLost = false; pollDelay = 1500; setConnectionStatus("ok"); }
+      if (connectionLost) { connectionLost = false; pollDelay = healthyPollDelay(); setConnectionStatus("ok"); }
     }
   } catch (err) {
     // A dead Desktop bridge surfaces here (timeout / send failure). Instead of

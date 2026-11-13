@@ -61585,7 +61585,7 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "9491ff0 \xB7 2026-11-13T13:52" : "dev";
+var SERVER_BUILD = true ? "97613c1 \xB7 2026-11-13T19:10" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const resuming = patch.status === "running" && existing.status === "paused";
