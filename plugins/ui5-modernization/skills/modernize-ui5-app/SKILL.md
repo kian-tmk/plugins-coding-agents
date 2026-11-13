@@ -223,13 +223,15 @@ Status in the CLI is pushed through the **`update-status` MCP tool** on the `ui5
 
 **This is deliberately NOT done via the plugin `.mcp.json`.** A dashboard entry there would create a duplicate registration (plugin + the user-scope entry) → two server PIDs → silently broken Desktop widget rendering (see the "Why two servers?" note above and ARCHITECTURE.md). The plugin `.mcp.json` registers only `chrome-devtools`.
 
-Check for any already-registered `ui5-modernization-*` MCP server; register one only if none exists. Idempotent — never add a second entry.
+**The catch — CLI has no hot-reload.** Claude Code reads MCP config only at session startup; there is no in-session reload (`/mcp` only manages already-known servers, `/reload-plugins` only plugin-bundled ones). So a server registered in *this* session is unusable until a *new* session starts. Because the dashboard is wanted from the very first status push, we handle this by **relaunching into a fresh session automatically** (a continuation chat — the same pattern as the dashboard Resume): register, spawn a new terminal that re-runs this skill, and exit the current session. The continuation session starts with the server already connected.
+
+Check for any already-registered `ui5-modernization-*` MCP server first. If one exists, do nothing (idempotent — never add a second entry) and continue the workflow in THIS session. Only when none exists do you register + relaunch.
 
 ```bash
 if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
-  # Any server whose name starts with ui5-modernization- already provides the tools.
   if claude mcp list 2>/dev/null | grep -qE '^ui5-modernization-'; then
-    echo "✅ Dashboard MCP server already registered."
+    echo "✅ Dashboard MCP server already registered — continuing in this session."
+    DASHBOARD_MCP_JUST_REGISTERED=false
   else
     # Prefer the plugin-delivered, self-contained bundle; fall back to the dev build.
     # (Resolve the same way as Step 1 — CLAUDE_PLUGIN_ROOT is not reliably set here.)
@@ -237,19 +239,46 @@ if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
     PLUGIN_SERVER_JS="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/ui5-modernization/dashboard/dist-server/main.js"
     [ -f "$PLUGIN_SERVER_JS" ] && MCP_SERVER_JS="$PLUGIN_SERVER_JS"
     if [ -f "$MCP_SERVER_JS" ]; then
-      claude mcp add ui5-modernization-dashboard -s user -- node "$MCP_SERVER_JS" --stdio \
-        && echo "✅ Registered dashboard MCP server (takes effect on the next Claude session)." \
-        || echo "⚠ Could not register the dashboard MCP server — status pushes may fail until it is added."
+      if claude mcp add ui5-modernization-dashboard -s user -- node "$MCP_SERVER_JS" --stdio; then
+        echo "✅ Registered dashboard MCP server — relaunching into a fresh session so it connects."
+        DASHBOARD_MCP_JUST_REGISTERED=true
+      else
+        echo "⚠ Could not register the dashboard MCP server — continuing without the dashboard."
+        DASHBOARD=false
+        DASHBOARD_MCP_JUST_REGISTERED=false
+      fi
     else
-      echo "⚠ Dashboard server bundle not found — cannot register the MCP server."
+      echo "⚠ Dashboard server bundle not found — continuing without the dashboard."
+      DASHBOARD=false
+      DASHBOARD_MCP_JUST_REGISTERED=false
     fi
   fi
 fi
 ```
 
+**If `DASHBOARD_MCP_JUST_REGISTERED=true`, relaunch now — do NOT continue the workflow in this session.** The MCP server is not connected here; pushing status would fail. Spawn a continuation chat in a new terminal that re-runs this skill (a fresh session loads the just-registered server), then stop. The continuation prompt must re-invoke the skill AND re-affirm the dashboard answer so the user is not asked again:
+
+```bash
+if [ "${DASHBOARD_MCP_JUST_REGISTERED:-false}" = "true" ]; then
+  PROJECT_DIR_ABS="$(pwd)"
+  CONT_PROMPT="/ui5-modernization:modernize-ui5-app — the dashboard MCP server was just registered in a previous session, so it is now connected. Show the dashboard in the browser (answer Yes to the dashboard question automatically — do not ask again) and continue the normal modernization workflow."
+  PROMPT_FILE="${TMPDIR:-/tmp}/ui5-modernization-relaunch-prompt.txt"
+  printf '%s' "$CONT_PROMPT" > "$PROMPT_FILE"
+  SHELL_CMD="cd '$PROJECT_DIR_ABS' && claude \"\$(cat '$PROMPT_FILE')\""
+  # Escape for the AppleScript double-quoted string, then open a new Terminal window.
+  ESCAPED=$(printf '%s' "$SHELL_CMD" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  osascript -e "tell application \"Terminal\"" -e "activate" -e "do script \"$ESCAPED\"" -e "end tell" \
+    && echo "✅ Opened a fresh session with the dashboard connected. You can close this window." \
+    || echo "⚠ Could not open a new terminal. Start a new 'claude' session and re-run the skill — the dashboard server is now registered."
+fi
+```
+
+After spawning the continuation chat, **tell the user a fresh window has opened with the dashboard connected, and stop.** Do not run Steps 3–4 or any `update-status` in this (now superseded) session — they would fail against the unconnected server. If the `osascript` spawn failed (non-macOS, or no Terminal), fall back to telling the user to start a new `claude` session themselves; the server is registered and will connect there.
+
 **IMPORTANT:**
-- A freshly added MCP server loads at **session startup**, so a registration done in *this* session only takes effect in the *next* one. If `ui5-modernization-*` was missing and you just added it, tell the user: the dashboard will be fully wired from the next Claude session; this run still pushes status best-effort (and a failed push never aborts the run). Do not loop trying to call the tool in this session if it was not already present.
+- The relaunch only happens on the FIRST run after a fresh plugin install (when the server was missing). Every later run finds it already registered and proceeds in-session with no relaunch.
 - Never register the dashboard server in the plugin `.mcp.json`. Never add a second `ui5-modernization-*` entry.
+- Do NOT loop trying to call `update-status` in a session where the server was just registered — it is not connected until the next session.
 
 #### Step 3: Start the HTTP server — CLI only
 
