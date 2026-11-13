@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { createServer } from "./server.js";
+import { createServer, resumeApp } from "./server.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -341,6 +341,79 @@ test("resuming from paused keeps progress and startedAt (not a new run)", async 
   assert.equal(r.currentPhase, 2);
   assert.equal(r.phases.length, 2, "phases preserved across resume");
   assert.notEqual(r.pauseRequested, true, "pauseRequested stays cleared after resume");
+});
+
+test("sessionId is a writable field that round-trips through update-status", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-sessionid-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "sessionid-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // sessionId alone must satisfy the "≥1 writable field" refinement and persist.
+  const pushed = await client.callTool({
+    name: "update-status",
+    arguments: { sessionId: "133dc163-2662-420b-ab64-a32482d13438" },
+  });
+  assert.equal((pushed.structuredContent as any).sessionId, "133dc163-2662-420b-ab64-a32482d13438");
+});
+
+test("resume-app refuses when the run is not paused (no spawn)", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-resumeapp-test-"));
+  const stateFile = path.join(directory, "state.json");
+  t.after(async () => { await rm(directory, { recursive: true, force: true }); });
+
+  // Running (not paused): must refuse without touching a terminal.
+  await writeFile(stateFile, JSON.stringify({
+    status: "running", projectPath: directory, sessionId: "133dc163-2662-420b-ab64-a32482d13438",
+  }));
+  const res = await resumeApp({ stateFile });
+  assert.equal(res.ok, false, "does not resume a non-paused run");
+  assert.match(res.message, /not paused/i);
+});
+
+test("resume-app refuses a paused run with no recorded session id (no spawn)", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-resumeapp-nosid-"));
+  const stateFile = path.join(directory, "state.json");
+  const savedEnv = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+  t.after(async () => {
+    if (savedEnv !== undefined) process.env.CLAUDE_CODE_SESSION_ID = savedEnv;
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  await writeFile(stateFile, JSON.stringify({ status: "paused", projectPath: directory }));
+  const res = await resumeApp({ stateFile });
+  assert.equal(res.ok, false, "no session id → cannot resume");
+  // On macOS the no-session-id guard fires; on other platforms the platform guard fires first.
+  assert.match(res.message, process.platform === "darwin" ? /session id/i : /only supported on macOS/i);
+});
+
+test("resume-app is registered as a non-UI tool", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-resumetool-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "resume-tool-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const { tools } = await client.listTools();
+  const resume = tools.find(tool => tool.name === "resume-app");
+  assert.ok(resume, "resume-app tool is registered");
+  const meta = resume!._meta;
+  const uiResource = (meta?.ui as { resourceUri?: string } | undefined)?.resourceUri ?? meta?.["ui/resourceUri"];
+  assert.ok(!uiResource, "resume-app is not a UI-bearing tool");
 });
 
 test("reset-app switches the repo back to the original branch and keeps the work branch", async (t) => {

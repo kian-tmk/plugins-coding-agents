@@ -6,6 +6,7 @@ import {
 import { McpServer, type CallToolResult, type ReadResourceResult } from "@modelcontextprotocol/server";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -294,6 +295,108 @@ export async function mergeApp(
   return { ok: true, message: `Merged '${workBranch}' into '${originalBranch}'. ${commitMessage}` };
 }
 
+export interface ResumeAppResult {
+  ok: boolean;
+  message: string;
+}
+
+// The prompt handed to the resumed agent. It is written to a temp file and read back by
+// the spawned shell (`claude --resume <id> "$(cat <file>)"`), so it never has to survive
+// shell/AppleScript quoting. The agent re-reads the state file and continues the workflow.
+const RESUME_PROMPT =
+  "Resume the UI5 modernization. Read ~/.ui5-modernization-dashboard/state.json for the "
+  + "current run state (currentPhase, phases, originalBranch, workBranch, sessionId, "
+  + "verificationMode) and read the branch/session temp files to restore your shell "
+  + "variables. Push status:\"running\" via the update-status tool to clear the paused "
+  + "state, then continue the modernize-ui5-app workflow from the current phase. Apply the "
+  + "same verificationMode as before without re-asking the user.";
+
+// A Claude Code session id is a UUID. Validate before putting it into a shell command
+// string so a malformed/hostile state file cannot inject into the spawned command.
+const SESSION_ID_RE = /^[A-Za-z0-9-]{1,128}$/;
+
+// Wake a paused run by spawning `claude --resume <sessionId>` in a new interactive
+// Terminal window (macOS). The paused REPL has exited at pause time (see SKILL.md), so
+// --resume re-attaches to the one transcript instead of forking a copy. Permissions are
+// inherited (no --permission-mode flag); a fresh prompt stalls in the terminal and the
+// agent surfaces resumeNeedsAttention. Shared by the resume-app tool and POST /api/resume-app.
+//
+// CLI/standalone only: a sandboxed Desktop widget cannot open a terminal, so the UI guards
+// this behind standaloneMode and never reaches here in that case.
+export async function resumeApp(
+  { stateFile = STATE_FILE }: { stateFile?: string } = {},
+): Promise<ResumeAppResult> {
+  const state = (await readState(stateFile)) ?? {};
+  const status = state.status as string | undefined;
+  const projectPath = state.projectPath as string | undefined;
+  const sessionId = (state.sessionId as string | undefined) ?? process.env.CLAUDE_CODE_SESSION_ID;
+
+  if (status !== "paused") {
+    return { ok: false, message: "Nothing to resume: the run is not paused." };
+  }
+  if (process.platform !== "darwin") {
+    return {
+      ok: false,
+      message: "Automatic resume is only supported on macOS. Continue the run from the chat "
+        + "with `claude --resume`.",
+    };
+  }
+  if (!sessionId || !SESSION_ID_RE.test(sessionId)) {
+    return {
+      ok: false,
+      message: "Cannot resume: no valid session id was recorded for this run. "
+        + "Continue it from the chat instead.",
+    };
+  }
+  if (!projectPath) {
+    return { ok: false, message: "Cannot resume: the run did not record a project path." };
+  }
+
+  // Stage the prompt in a temp file so the spawned shell reads it verbatim — no nested quoting.
+  let promptFile: string;
+  try {
+    promptFile = path.join(os.tmpdir(), `ui5-resume-prompt-${Date.now()}.txt`);
+    await fs.writeFile(promptFile, RESUME_PROMPT, "utf-8");
+  } catch (error) {
+    return { ok: false, message: `Cannot resume: failed to stage the continuation prompt (${(error as Error).message}).` };
+  }
+
+  // The shell command the new Terminal runs. projectPath/promptFile are our own values
+  // (or validated), so single-quoting them is safe here.
+  const shellCommand =
+    `cd ${shellQuote(projectPath)} && `
+    + `claude --resume ${sessionId} "$(cat ${shellQuote(promptFile)})"`;
+  // Embed that command into an AppleScript string (escape backslashes and double quotes).
+  const appleScript = `tell application "Terminal"\nactivate\ndo script "${appleScriptEscape(shellCommand)}"\nend tell`;
+
+  try {
+    await execFileAsync("osascript", ["-e", appleScript], { timeout: 10000 });
+  } catch (error) {
+    return { ok: false, message: `Cannot resume: failed to open a terminal (${(error as Error).message}).` };
+  }
+
+  // Clear the button signal; leave status "paused" — the woken agent flips it to "running"
+  // through writeState's resuming branch, which preserves startedAt and all progress.
+  const latest = (await readState(stateFile)) ?? {};
+  await saveState({ ...latest, resumeRequested: null }, stateFile);
+
+  return {
+    ok: true,
+    message: "Resuming — a terminal opened and the run is continuing in the same session. "
+      + "If it asks for a permission, switch to that terminal and approve.",
+  };
+}
+
+// Wrap a value in single quotes for POSIX sh, escaping embedded single quotes.
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+// Escape a string for embedding inside an AppleScript double-quoted literal.
+function appleScriptEscape(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 export function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {}): McpServer {
   const server = new McpServer({
     name: "UI5 Modernization",
@@ -432,6 +535,34 @@ export function createServer({ enableDesktopSetup = false, stateFile = STATE_FIL
     },
     async (): Promise<CallToolResult> => {
       const result = await mergeApp({ stateFile });
+      const state = await readState(stateFile);
+      return {
+        content: [{ type: "text", text: result.message }],
+        structuredContent: state ?? { status: "idle" },
+        isError: result.ok ? undefined : true,
+      };
+    },
+  );
+
+  // Tool: resume-app — the dashboard Resume button's entry point (CLI/standalone only).
+  // Spawns `claude --resume <sessionId>` in a terminal to continue a paused run in the same
+  // session. Only acts when status is "paused"; macOS only. Leaves status "paused" — the
+  // woken agent flips it to "running" via writeState's resuming branch (progress preserved).
+  server.registerTool(
+    "resume-app",
+    {
+      title: "Resume Modernization",
+      description:
+        "Resume a paused modernization by reopening its Claude Code session. Spawns "
+        + "`claude --resume <sessionId>` in a new terminal (macOS) so the SAME chat continues the "
+        + "run from where it paused — no manual typing in the chat. Only available when the run is "
+        + "paused and a session id was recorded. CLI/browser dashboard only (a sandboxed desktop "
+        + "widget cannot open a terminal).",
+      inputSchema: z.object({}),
+      outputSchema: stateSchema,
+    },
+    async (): Promise<CallToolResult> => {
+      const result = await resumeApp({ stateFile });
       const state = await readState(stateFile);
       return {
         content: [{ type: "text", text: result.message }],

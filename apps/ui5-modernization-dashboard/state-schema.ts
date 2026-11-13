@@ -43,6 +43,19 @@ export const stateSchema = z.object({
     + "The agent reads it back from update-status and pauses at the next checkpoint, then calls "
     + "pause-status (status:\"paused\"). A pure signal — it does not change `status` on its own.",
   ),
+  sessionId: z.string().nullable().describe(
+    "CLAUDE_CODE_SESSION_ID of the live CLI run. Pushed by the skill at run start and again at "
+    + "pause time; the dashboard Resume button uses it as the `claude --resume <id>` target. "
+    + "Never the messaging token — only the session id.",
+  ),
+  resumeRequested: z.boolean().nullable().describe(
+    "Set true by the dashboard Resume button (request-resume / resume-app) while the run is "
+    + "paused. The server clears it once it has spawned the resumed run. A pure signal.",
+  ),
+  resumeNeedsAttention: z.boolean().nullable().describe(
+    "Set true by a resumed run that stalled on a new permission prompt in its terminal; the "
+    + "dashboard surfaces a 'needs attention' hint. Cleared once the run is visibly moving again.",
+  ),
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: z.enum(["pending", "merged", "skipped"]).nullable(),

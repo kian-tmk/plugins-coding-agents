@@ -61097,6 +61097,7 @@ function G(B2, Q2, F2, V2, q2) {
 // server.ts
 import { execFile } from "node:child_process";
 import fs2 from "node:fs/promises";
+import os2 from "node:os";
 import path2 from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -61463,11 +61464,21 @@ var stateSchema = external_exports.object({
   completedAt: external_exports.string().nullable().describe("Server-managed completion time; omit from updates."),
   stoppedAt: external_exports.string().nullable().describe("Server-managed stop time; omit from updates."),
   stopReason: external_exports.string().nullable().describe("Free-text reason why the run was stopped early."),
+  stopNote: external_exports.string().nullable().describe("1\u20133 sentence description of the state at stop time \u2014 which phase was active, whether changes were committed, what remains. Shown below the phase summary in the dashboard. Plain prose, no markdown."),
   stopRequested: external_exports.boolean().nullable().describe(
     "Set true by the dashboard Stop button (request-stop) while the run is still running. The agent reads it back from update-status and stops at the next checkpoint, then calls stop-status. A pure signal \u2014 it does not change `status` on its own."
   ),
   pauseRequested: external_exports.boolean().nullable().describe(
     'Set true by the dashboard Pause button (request-pause) while the run is still running. The agent reads it back from update-status and pauses at the next checkpoint, then calls pause-status (status:"paused"). A pure signal \u2014 it does not change `status` on its own.'
+  ),
+  sessionId: external_exports.string().nullable().describe(
+    "CLAUDE_CODE_SESSION_ID of the live CLI run. Pushed by the skill at run start and again at pause time; the dashboard Resume button uses it as the `claude --resume <id>` target. Never the messaging token \u2014 only the session id."
+  ),
+  resumeRequested: external_exports.boolean().nullable().describe(
+    "Set true by the dashboard Resume button (request-resume / resume-app) while the run is paused. The server clears it once it has spawned the resumed run. A pure signal."
+  ),
+  resumeNeedsAttention: external_exports.boolean().nullable().describe(
+    "Set true by a resumed run that stalled on a new permission prompt in its terminal; the dashboard surfaces a 'needs attention' hint. Cleared once the run is visibly moving again."
   ),
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
@@ -61574,7 +61585,7 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "a44b6f8 \xB7 2026-11-11T15:16" : "dev";
+var SERVER_BUILD = true ? "9491ff0 \xB7 2026-11-13T13:52" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const resuming = patch.status === "running" && existing.status === "paused";
@@ -61755,6 +61766,61 @@ async function mergeApp({ stateFile = STATE_FILE } = {}) {
   await saveState({ ...existing, mergeStatus: "merged", mergedAt: (/* @__PURE__ */ new Date()).toISOString() }, stateFile);
   return { ok: true, message: `Merged '${workBranch}' into '${originalBranch}'. ${commitMessage}` };
 }
+var RESUME_PROMPT = 'Resume the UI5 modernization. Read ~/.ui5-modernization-dashboard/state.json for the current run state (currentPhase, phases, originalBranch, workBranch, sessionId, verificationMode) and read the branch/session temp files to restore your shell variables. Push status:"running" via the update-status tool to clear the paused state, then continue the modernize-ui5-app workflow from the current phase. Apply the same verificationMode as before without re-asking the user.';
+var SESSION_ID_RE = /^[A-Za-z0-9-]{1,128}$/;
+async function resumeApp({ stateFile = STATE_FILE } = {}) {
+  const state = await readState(stateFile) ?? {};
+  const status = state.status;
+  const projectPath = state.projectPath;
+  const sessionId = state.sessionId ?? process.env.CLAUDE_CODE_SESSION_ID;
+  if (status !== "paused") {
+    return { ok: false, message: "Nothing to resume: the run is not paused." };
+  }
+  if (process.platform !== "darwin") {
+    return {
+      ok: false,
+      message: "Automatic resume is only supported on macOS. Continue the run from the chat with `claude --resume`."
+    };
+  }
+  if (!sessionId || !SESSION_ID_RE.test(sessionId)) {
+    return {
+      ok: false,
+      message: "Cannot resume: no valid session id was recorded for this run. Continue it from the chat instead."
+    };
+  }
+  if (!projectPath) {
+    return { ok: false, message: "Cannot resume: the run did not record a project path." };
+  }
+  let promptFile;
+  try {
+    promptFile = path2.join(os2.tmpdir(), `ui5-resume-prompt-${Date.now()}.txt`);
+    await fs2.writeFile(promptFile, RESUME_PROMPT, "utf-8");
+  } catch (error62) {
+    return { ok: false, message: `Cannot resume: failed to stage the continuation prompt (${error62.message}).` };
+  }
+  const shellCommand = `cd ${shellQuote(projectPath)} && claude --resume ${sessionId} "$(cat ${shellQuote(promptFile)})"`;
+  const appleScript = `tell application "Terminal"
+activate
+do script "${appleScriptEscape(shellCommand)}"
+end tell`;
+  try {
+    await execFileAsync("osascript", ["-e", appleScript], { timeout: 1e4 });
+  } catch (error62) {
+    return { ok: false, message: `Cannot resume: failed to open a terminal (${error62.message}).` };
+  }
+  const latest = await readState(stateFile) ?? {};
+  await saveState({ ...latest, resumeRequested: null }, stateFile);
+  return {
+    ok: true,
+    message: "Resuming \u2014 a terminal opened and the run is continuing in the same session. If it asks for a permission, switch to that terminal and approve."
+  };
+}
+function shellQuote(value) {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+function appleScriptEscape(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
 function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {}) {
   const server = new McpServer({
     name: "UI5 Modernization",
@@ -61879,6 +61945,24 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
     }
   );
   server.registerTool(
+    "resume-app",
+    {
+      title: "Resume Modernization",
+      description: "Resume a paused modernization by reopening its Claude Code session. Spawns `claude --resume <sessionId>` in a new terminal (macOS) so the SAME chat continues the run from where it paused \u2014 no manual typing in the chat. Only available when the run is paused and a session id was recorded. CLI/browser dashboard only (a sandboxed desktop widget cannot open a terminal).",
+      inputSchema: external_exports.object({}),
+      outputSchema: stateSchema
+    },
+    async () => {
+      const result = await resumeApp({ stateFile });
+      const state = await readState(stateFile);
+      return {
+        content: [{ type: "text", text: result.message }],
+        structuredContent: state ?? { status: "idle" },
+        isError: result.ok ? void 0 : true
+      };
+    }
+  );
+  server.registerTool(
     "get-file",
     {
       title: "Get File Content",
@@ -61917,11 +62001,14 @@ function createServer({ enableDesktopSetup = false, stateFile = STATE_FILE } = {
     {
       title: "Stop Modernization",
       description: 'Mark the modernization as stopped by the user before it completed. Call this (instead of pushing status:"completed") when the user asks to stop/abort the run. The existing state is preserved \u2014 remaining findings, phases and deferred issues stay visible on the end screen. Pass an optional free-text reason shown on the dashboard.',
-      inputSchema: external_exports.object({ reason: external_exports.string().optional() }),
+      inputSchema: external_exports.object({
+        reason: external_exports.string().optional(),
+        note: external_exports.string().optional().describe("1\u20133 sentence description of the state at stop time \u2014 which phase was active, whether changes were committed, what remains. Shown below the phase summary in the dashboard. Plain prose, no markdown.")
+      }),
       outputSchema: stateSchema
     },
     async (args) => {
-      const merged = await writeState2(stateFile, { status: "stopped", stopReason: args.reason ?? null, stopRequested: true });
+      const merged = await writeState2(stateFile, { status: "stopped", stopReason: args.reason ?? null, stopNote: args.note ?? null, stopRequested: true });
       return {
         content: [{ type: "text", text: `Modernization stopped${args.reason ? `: ${args.reason}` : ""}.` }],
         structuredContent: merged
@@ -62160,6 +62247,10 @@ async function startStreamableHTTPServer(factory) {
   app.post("/api/merge-app", async (_req, res) => {
     stopGitPolling();
     const result = await mergeApp();
+    res.status(result.ok ? 200 : 409).json(result);
+  });
+  app.post("/api/resume-app", async (_req, res) => {
+    const result = await resumeApp();
     res.status(result.ok ? 200 : 409).json(result);
   });
   app.all("/mcp", async (req, res) => {

@@ -251,8 +251,14 @@ shows "no modernization running" before the first status arrives. Do these three
 2. **Push the "started" state FIRST**, before the view is opened, so the state file already says `stage:"started"` when the browser/widget loads and its very first fetch shows "Modernization started" — no idle flash:
 
 ```bash
+# Capture this CLI session's id so the dashboard Resume button can reopen THIS chat
+# after a pause (claude --resume <id>). Only the id goes into state — never any token.
+# Persist it to a file too, so it survives across tool calls (like the branch file).
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+printf '%s\n' "$SESSION_ID" > "${TMPDIR:-/tmp}/ui5-modernization-session.txt"
+
 # stage:"started" drives the "Modernization started" screen. No phases yet.
-push_status "{\"status\":\"running\",\"stage\":\"started\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+push_status "{\"status\":\"running\",\"stage\":\"started\",\"sessionId\":\"$SESSION_ID\",\"project\":\"$(basename $PROJECT_PATH)\",\"projectPath\":\"$PROJECT_PATH\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 ```
 
 Call the `update-status` MCP tool with that payload.
@@ -316,6 +322,7 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 | Run complete (after docs commit) | `status:"completed"`, `completedAt`, `overallProgress:100`, `deferredIssues` |
 | User stops the run early | Call the **`stop-status`** tool (optional `reason`) — do NOT push `status:"completed"`. Preserves remaining findings, phases and deferred issues on the end screen. |
 | Dashboard **Stop button** clicked | The server sets `stopRequested:true` (status stays `running`). You see it in the **return value of your next `update-status`** — then run the Stopping-early procedure below. |
+| Dashboard **Pause button** clicked | The server sets `pauseRequested:true` (status stays `running`). You see it in the **return value of your next `update-status`** — then run the **Pausing** procedure below. |
 | User asks to reset/undo | Call the **`reset-app`** tool — discards uncommitted changes, switches back to original branch, resets dashboard to idle. Never do manual git checkout/branch -D. |
 | Run complete, clean (auto-merge) | Call the **`merge-app`** tool — merges work branch into original via `git merge --no-ff`. Do NOT merge manually. |
 
@@ -398,6 +405,20 @@ wipes the dashboard to idle and loses the stop context). Do exactly this, in ord
 4. Tell the user the run is stopped, which branch the work is on (`workBranch`), and that they can reset to `originalBranch` from the dashboard or by asking you.
 
 Never push `status:"completed"` or `status:"idle"` for a user stop. It is fire-and-forget like the other pushes.
+
+**Pausing (user asks to pause, OR `pauseRequested:true` seen in an `update-status` return):** A pause is a *resumable* hold — unlike a stop, the run is meant to continue later from exactly here. Do this, in order:
+
+1. **Reach a safe checkpoint first.** Same checkpoints as a stop (phase start, after a sub-agent batch returns, before a commit, before a gate) — the tree must be consistent (no half-applied edits). If a long step is in flight, finish the current atomic step or `TaskStop` the background sub-agent at the checkpoint; do not abandon a half-written file.
+2. **Push `sessionId` so the dashboard can reopen this exact chat.** Call `update-status` with `{"sessionId":"<value of $CLAUDE_CODE_SESSION_ID>"}` (also in `${TMPDIR:-/tmp}/ui5-modernization-session.txt` from Step 4). The dashboard Resume button runs `claude --resume <sessionId>` against it.
+3. **Call the `pause-status` MCP tool.** This sets `status:"paused"` and clears `pauseRequested`. All progress (phases, findings, branch) is preserved.
+4. **Tell the user the run is paused and how to resume, then end the session.** Say: *"Paused at <phase/step>. Click **Resume** on the dashboard to continue this same run — it will reopen this chat in a terminal."* Then **exit the Claude Code process** (end the session, not just the turn). Exiting matters: the dashboard's Resume uses `claude --resume <sessionId>`, which re-attaches to this one transcript only if the original process has exited — a still-running process would make `--resume` fork a *copy* instead. (If the user is in a context where they prefer to keep typing, they can simply continue in the chat instead of exiting; but for the one-click dashboard Resume to work cleanly, exit here.)
+
+**Resuming (dashboard Resume button, via `claude --resume`):** When you are started by a resume, you are continuing a paused run — do NOT start fresh and do NOT re-run preflight. First actions, in order:
+
+1. **Re-read the state:** read `~/.ui5-modernization-dashboard/state.json` for `currentPhase`, `phases`, `originalBranch`, `workBranch`, `sessionId`, `verificationMode`, and read `${TMPDIR:-/tmp}/ui5-modernization-branches.txt` and `ui5-modernization-session.txt` to restore `ORIGINAL_BRANCH`/`WORK_BRANCH`/`SESSION_ID` and re-define the `push_status`/timer helpers (Step 4). Confirm the repo is on `workBranch`.
+2. **Clear the paused state:** push `status:"running"` via `update-status`. The server recognizes the `paused → running` transition and preserves `startedAt` and all progress (it is not treated as a new run).
+3. **Continue the workflow from `currentPhase`** using the recorded `verificationMode` — do **not** re-ask the mode question.
+4. **Permission stalls:** because a resumed run inherits the project's permission settings, it may hit a prompt the dashboard can't show. If you are about to do work that could prompt, push `{"resumeNeedsAttention":true}` first (the dashboard shows a "needs your attention" hint), and push `{"resumeNeedsAttention":null}` once real work is visibly moving again.
 
 **Resetting (user asks to undo/reset the modernization):** Call the **`reset-app`** MCP tool (on the `ui5-modernization-dashboard` server). It reads `originalBranch`, `workBranch` and `projectPath` from the stored state, discards all uncommitted changes on the work branch (`git checkout . && git clean -fd`), switches back to `originalBranch`, and resets the dashboard to idle. Pass `{"removeWorkBranch": true}` to also delete the work branch. **Do NOT implement the reset manually** (no manual `git checkout main`, no manual `git branch -D`) — always use the tool, it handles edge cases and cleanup correctly.
 

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { marked } from "marked";
-import { createServer, resetApp, mergeApp, SERVER_BUILD } from "./server.js";
+import { createServer, resetApp, mergeApp, resumeApp, SERVER_BUILD } from "./server.js";
 import { readState, saveState, STATE_FILE } from "./state-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -225,6 +225,14 @@ async function startStreamableHTTPServer(
   app.post("/api/merge-app", async (_req: Request, res: Response) => {
     stopGitPolling();
     const result = await mergeApp();
+    res.status(result.ok ? 200 : 409).json(result);
+  });
+
+  // REST API: resume a paused run by reopening its Claude Code session in a terminal.
+  // Standalone-browser entry point for the dashboard Resume button; the MCP resume-app
+  // tool is the Desktop path (which no-ops, since a widget can't open a terminal).
+  app.post("/api/resume-app", async (_req: Request, res: Response) => {
+    const result = await resumeApp();
     res.status(result.ok ? 200 : 409).json(result);
   });
 

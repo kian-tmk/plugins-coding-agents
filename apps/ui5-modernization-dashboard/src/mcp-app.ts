@@ -161,6 +161,9 @@ interface ModernizationState {
   stopNote: string | null;
   stopRequested: boolean | null;
   pauseRequested: boolean | null;
+  sessionId: string | null;
+  resumeRequested: boolean | null;
+  resumeNeedsAttention: boolean | null;
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
@@ -1088,21 +1091,32 @@ async function requestPause(state: ModernizationState) {
   setActionStatus("ok", message || "Pause requested — waiting for the agent to reach a safe point.");
 }
 
-// Resume from the paused screen. PLACEHOLDER for now: a widget cannot start a new
-// agent turn on its own (same IPC limit as Stop), so until the resume skill lands this
-// only tells the user to continue the run from the chat. Wiring a resumeRequested
-// signal + the resume skill is a follow-up.
-function resumeRun(_state: ModernizationState) {
-  setIdleMessage({
-    title: "Resume from the chat",
-    subtitle: "Tell the agent to continue the modernization in the chat (e.g. “continue”). "
-      + "A one-click resume from here is coming with the resume skill.",
-    variant: "neutral",
-    illustration: "BeforeSearch",
-    headerIcon: "play",
-    iconBlue: true,
-    hint: false,
-  });
+// Resume from the paused screen. In CLI/standalone mode the dashboard server spawns
+// `claude --resume <sessionId>` in a terminal (via /api/resume-app), so one click
+// continues the SAME session. In the Desktop widget a sandboxed iframe can't open a
+// terminal and the server has no interactive target, so we fall back to guidance.
+async function resumeRun(state: ModernizationState) {
+  if (!standaloneMode) {
+    setIdleMessage({
+      title: "Resume from the chat",
+      subtitle: "Tell the agent to continue the modernization in the chat (e.g. “continue”). "
+        + "One-click resume works in the browser dashboard; the desktop widget can't open a terminal.",
+      variant: "neutral",
+      illustration: "BeforeSearch",
+      headerIcon: "play",
+      iconBlue: true,
+      hint: false,
+    });
+    return;
+  }
+  setActionStatus("working", "Resuming the modernization…");
+  const { failed, message } = await callAction("/api/resume-app", "resume-app");
+  if (failed) {
+    setActionStatus("error", message || "Could not resume the run.");
+    return;
+  }
+  setActionStatus("ok", message || "Resumed — the run is continuing in your terminal.");
+  state.resumeRequested = true;
 }
 
 // Stop from the paused screen — end the run for good via stop-status (preserves
@@ -1381,9 +1395,15 @@ function renderIdle(state: ModernizationState | null): void {
   // Resume (continue the run) and Stop (end it, preserving progress).
   const paused = state && ((state.status as string) === "paused" || (state as any).paused === true);
   if (paused) {
+    // After a resume, the run may stall on a fresh permission prompt in the terminal —
+    // the dashboard can't see it, so the agent flags resumeNeedsAttention and we hint.
+    const needsAttention = state.resumeNeedsAttention === true;
     setIdleMessage({
-      title: "Paused",
-      subtitle: "The modernization is paused at a safe point. Resume to continue, or stop the run.",
+      title: needsAttention ? "Resumed — needs your attention" : "Paused",
+      subtitle: needsAttention
+        ? "The resumed run is waiting on a permission prompt in your terminal. Switch to that "
+          + "terminal and approve it to let the modernization continue."
+        : "The modernization is paused at a safe point. Resume to continue, or stop the run.",
       variant: "warning",
       illustration: "Connection",
       headerIcon: "pause",

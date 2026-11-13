@@ -97,13 +97,15 @@ Wichtigste Felder (TypeScript-Schema: `ModernizationState` in `src/mcp-app.ts`):
 
 | Feld | Bedeutung |
 |---|---|
-| `status` | `"idle"` \| `"running"` \| `"completed"` \| `"stopped"` — steuert, welcher Screen gezeigt wird |
+| `status` | `"idle"` \| `"running"` \| `"completed"` \| `"stopped"` \| `"paused"` — steuert, welcher Screen gezeigt wird |
 | `runId`, `model`, `buildCommand`, `testCommand` | Run-Metadaten |
 | `project`, `projectPath`, `ui5Version`, `verificationMode`, `workingTreeStatus` | Preflight-Infos im Kopf |
 | `originalBranch`, `workBranch` | Git-Branches für reset-app (Original-Branch des Users, Modernisierungs-Branch) |
 | `linterBaseline`, `totalFindings`, `findingsFixed`, `findingsRemaining` | Finding-Zähler |
 | `currentPhase`, `currentActivity`, `overallProgress` | aktueller Fortschritt |
 | `startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`, `stopReason`, `elapsedSeconds` | Zeitanker für die Timer + Stop-Info |
+| `stopRequested`, `pauseRequested` | reine Button-Signale (Stop/Pause), ändern `status` nicht selbst — der Agent liest sie aus dem `update-status`-Rückgabewert und reagiert am nächsten Checkpoint |
+| `sessionId`, `resumeRequested`, `resumeNeedsAttention` | Resume-Felder (CLI). `sessionId` = `CLAUDE_CODE_SESSION_ID` des Laufs (das `claude --resume`-Ziel), vom Skill bei Start und erneut beim Pausieren gepusht — nie ein Token, nur die ID. `resumeRequested` = Button-Signal (Server löscht es nach dem Spawn). `resumeNeedsAttention` = der fortgesetzte Lauf hängt an einer Permission-Abfrage im Terminal → Paused-Screen zeigt einen Hinweis |
 | `mergedAt`, `mergeStatus` | Merge-Status (`"pending"` \| `"merged"` \| `"skipped"` \| `null`); `mergedAt` server-verwaltet |
 | `lastOutcome` | server-geschriebene, persistente Bestätigung der letzten Reset/Clear-Aktion (`kind:"reset"\|"merged-cleared"`, Branch-Namen, `at`). Der Idle-Screen liest sie aus dem State, damit die „zurückgesetzt"-Meldung Reload/zweiten Tab überlebt. Ein neuer Lauf verwirft sie |
 | `stage` | Früh-Zustand vor der Phasen-Ansicht: `"started"` (Dashboard geöffnet) → `"linting"` (Baseline-Linter läuft). Steuert die Idle-Screens „Modernisierung gestartet"/„Linter läuft". Wird verworfen, sobald die erste `phases`-Liste ankommt |
@@ -136,8 +138,10 @@ Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen 
 - `GET /api/status` → aktueller State (JSON); startet bei `running` das Git-Polling
 - `POST /api/reset` → State auf idle, stoppt Polling
 - `POST /api/stop` → Run als gestoppt markieren (mit optionalem `reason` im JSON-Body), Fortschritt bleibt erhalten
+- `POST /api/request-stop` / `POST /api/request-pause` → nur das jeweilige Signal (`stopRequested`/`pauseRequested`) setzen, `status` bleibt `running` (Browser-Backup für die Header-Buttons)
 - `POST /api/reset-app` → Repo auf Original-Branch zurücksetzen (optional `removeWorkBranch: true` im Body)
 - `POST /api/merge-app` → Work-Branch via `git merge --no-ff` in Original-Branch mergen; nur wenn Run completed und alle Gates passed
+- `POST /api/resume-app` → pausierten Lauf fortsetzen: spawnt `claude --resume <sessionId>` in einem Terminal (macOS); nur wenn `status:"paused"` und eine gültige `sessionId` vorliegt
 - `GET /files/:filename` → rendert eine .md-Datei (Report/Issues) als styled HTML-Seite; löst Pfad aus State auf, Fallback auf `modernization-history/`
 - `ALL /mcp` → Streamable-HTTP-MCP-Transport (pro Request eine neue `McpServer`-Instanz)
 
@@ -149,6 +153,9 @@ Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen 
 - `stop-status` — Run als gestoppt markieren (`status:"stopped"`), dabei Fortschrittsdaten erhalten (Phasen, Findings, deferred Issues). Für User-Abbruch, nicht für `reset`
 - `reset-app` — Gesamten Modernisierungslauf rückgängig machen: verwirft uncommitted Changes auf dem Work-Branch (`git checkout . && git clean -fd`), wechselt zurück auf den Original-Branch, setzt Dashboard auf idle und schreibt ein persistentes `lastOutcome`. Optional: Work-Branch löschen (`removeWorkBranch: true`). Nach einem Merge: erkennt `mergeStatus:"merged"` und setzt nur Dashboard auf idle (kein Branch-Switch nötig). **Worktree-aware:** ist `projectPath` ein Git-Worktree (Desktop „Use worktree"), wird der Worktree entfernt (`git worktree remove`) statt eines Branch-Switches — der Original-Branch lebt bereits im Root-Checkout
 - `merge-app` — Work-Branch via `git merge --no-ff` in Original-Branch mergen. Nur verfügbar wenn Run completed und alle Gates passed. Erstellt Merge-Commit mit Zusammenfassung (Findings, Phasen). Setzt `mergeStatus:"merged"` und `mergedAt`. Verweigert bei fehlgeschlagenen Gates oder wenn bereits gemergt. **Worktree-aware:** bei einem Worktree läuft der Merge direkt im Root-Repo (das schon auf dem Original-Branch steht), mit `git merge --abort` als Rollback
+- `request-stop` / `stop-status` — Zwei-Stufen-Stop: `request-stop` setzt nur `stopRequested` (Button), `stop-status` finalisiert (`status:"stopped"`, s.o.)
+- `request-pause` / `pause-status` — Zwei-Stufen-Pause: `request-pause` setzt nur `pauseRequested` (Button), `pause-status` finalisiert (`status:"paused"`, Fortschritt erhalten, resumbar)
+- `resume-app` — pausierten Lauf fortsetzen (CLI/Standalone): spawnt `claude --resume <sessionId>` in einem neuen Terminal (nur macOS), sodass **dieselbe** Session ab der pausierten Phase weiterläuft. Nur wenn `status:"paused"` und eine gültige `sessionId` vorliegt; validiert die Session-ID gegen einen sicheren Zeichensatz vor dem Shell-Spawn. Lässt `status:"paused"` stehen — der wiedererweckte Agent setzt selbst auf `running` (via `writeState`-Resuming-Branch, `startedAt`/Fortschritt bleiben erhalten). Im Desktop-Widget ein No-Op (ein sandboxed iframe kann kein Terminal öffnen) — die UI führt es nur bei `standaloneMode` aus
 - `get-file` — eine .md-Datei per absolutem Pfad lesen (für die Markdown-Anzeige im Desktop)
 - `setup-desktop-dashboard` — (nur macOS, nur stdio-Modus, gated durch `enableDesktopSetup`-Flag) MCP-Server-Registrierung in Claude Desktop Config vorbereiten; launchd-Helper wartet auf User-Quit. Optionale `projectPath` + `resumeContext` bereiten einen Fortsetzungs-Chat vor (Deep-Link `claude://code/new`), der den Workflow nach dem Neustart fortsetzt. Rückgabe-Status steuert den Skill: `configured` (schon registriert → **kein** Neustart, direkt weiter), `waiting-for-quit` (Registrierung vorbereitet → User muss ⌘Q drücken, Helper öffnet Claude + Fortsetzungs-Chat neu), oder Fehler (→ ohne Dashboard fortfahren)
 - Resource `ui://ui5-modernization/mcp-app.html` — die UI selbst
@@ -157,7 +164,7 @@ Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen 
 
 Eine Single-Page-App mit drei HTML-Screens, umgeschaltet nach `state.status`:
 
-- **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: allgemeiner Fehler (`error`), server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Früh-Phase „Modernisierung gestartet"/„Linter läuft" (via `stage`, `neutral`) und sonst „keine Modernisierung". Jeder Zustand mit eigener Illustration + Header-Icon. Pausiert-Darstellung vorbereitet (kein Server-Status). Alle Texte Englisch (seit 2026-11-11).
+- **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: allgemeiner Fehler (`error`), server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Früh-Phase „Modernisierung gestartet"/„Linter läuft" (via `stage`, `neutral`) und sonst „keine Modernisierung". Jeder Zustand mit eigener Illustration + Header-Icon. **Paused-Screen** (`warning`) mit **Resume**- und **Stop**-Button (Resume funktioniert in CLI, s. Resume-Szenario); bei `resumeNeedsAttention` ein „needs your attention"-Hinweis. Alle Texte Englisch (seit 2026-11-11).
 - **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität, Git-Commits.
 - **Completed / Stopped** — Zusammenfassung: Phasen-Tabelle mit Gate-Ergebnissen, Statistiken, Links zu Report/Issues (Markdown-Viewer), Reset-Button. Bei `stopped`: Stop-Grund statt Erfolgs-Header, Remaining-Findings hervorgehoben. Beide Status nutzen denselben HTML-Screen (`screen-completed`).
 
@@ -232,6 +239,18 @@ gewähltem Modus (full autonomous / half autonomous / manual).
 1. Agent ruft `stop-status` mit optionalem `reason` → `status:"stopped"`, Fortschritt bleibt erhalten.
 2. Dashboard zeigt Stopped-Screen mit bisherigen Phasen und Stop-Grund.
 3. Reset-Button im Dashboard oder `reset-app`-Tool: verwirft uncommitted Changes (`git checkout . && git clean -fd`), wechselt auf Original-Branch, Dashboard auf idle.
+
+### User pausiert & resümiert den Lauf (CLI)
+
+Pause ist ein *resumbarer* Hold (im Gegensatz zum Stop): derselbe Lauf soll genau hier weitergehen.
+
+1. Pause-Button → `request-pause` setzt `pauseRequested:true` (Status bleibt `running`). Der Agent sieht das Flag im Rückgabewert seines nächsten `update-status`.
+2. Am nächsten sicheren Checkpoint pusht der Agent `sessionId`, ruft `pause-status` (`status:"paused"`) und **beendet den REPL-Prozess**. Das Beenden ist nötig, damit `claude --resume` dieselbe Session lädt statt eine Kopie abzuspalten.
+3. Dashboard zeigt den Paused-Screen mit **Resume**- und **Stop**-Button.
+4. Resume-Button → `resume-app` (CLI: via `POST /api/resume-app`). Der Server spawnt `claude --resume <sessionId>` in einem neuen Terminal (macOS). Der wiedererweckte Agent liest den State neu, pusht `status:"running"` (der `paused → running`-Übergang erhält `startedAt`/Fortschritt) und setzt ab `currentPhase` fort — ohne die Verifikations-Modus-Frage erneut zu stellen.
+5. Hängt der fortgesetzte Lauf an einer Permission-Abfrage im Terminal, pusht der Agent `resumeNeedsAttention:true` → der Paused-Screen zeigt einen „needs your attention"-Hinweis; nach sichtbarem Fortschritt wird es wieder gelöscht.
+
+> **Grenzen:** Nur CLI/Browser-Dashboard (`standaloneMode`) und nur macOS (osascript/Terminal). Im Desktop-Widget ist `resume-app` ein No-Op mit Hinweis „continue from the chat". Resume läuft immer in einem **neuen** Terminal-Fenster — „gleiches Fenster" ist nicht umgesetzt (es bräuchte Claude Codes privaten, undokumentierten Messaging-Socket; bewusst verworfen zugunsten des stabilen `--resume`-Spawns).
 
 ### User will Reset nach Abschluss
 
@@ -319,6 +338,16 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-13 — One-Click-Resume für pausierte Läufe (CLI)
+
+- **Resume-Button funktioniert jetzt (vorher Platzhalter).** Ein Klick auf dem Paused-Screen setzt einen pausierten Lauf fort, indem der HTTP-Server `claude --resume <sessionId>` in einem neuen Terminal spawnt — dieselbe Session läuft ab der pausierten Phase automatisch weiter, ohne dass der User im Chat tippen muss. **Nur CLI/Standalone + macOS;** im Desktop-Widget ein No-Op mit „continue from the chat"-Hinweis.
+- **Neue State-Felder** (`state-schema.ts`): `sessionId` (das `claude --resume`-Ziel, vom Skill bei Start und beim Pausieren gepusht — nie ein Token), `resumeRequested` (Button-Signal), `resumeNeedsAttention` (Permission-Stall-Hinweis). Gleiche Felder im `ModernizationState`-Interface (`src/mcp-app.ts`).
+- **`resumeApp()`-Helper + `resume-app`-Tool** (`server.ts`, nach dem `resetApp`/`mergeApp`-Muster): prüft `status:"paused"` + macOS + gültige `sessionId` (validiert gegen sicheren Zeichensatz vor dem Shell-Spawn), staget den Fortsetzungs-Prompt in einer Temp-Datei (umgeht Quoting), spawnt via `osascript`, löscht `resumeRequested`. Lässt `status:"paused"` — der `writeState`-Resuming-Branch (`paused → running`) erhält `startedAt`/Fortschritt.
+- **REST:** `POST /api/resume-app` (`main.ts`, analog zu `/api/reset-app`). Frontend: echter `resumeRun()` über die `callAction`-Dual-Dispatch; Desktop-No-Op hinter dem `standaloneMode`-Guard; „needs your attention"-Hinweis auf dem Paused-Screen bei `resumeNeedsAttention`.
+- **Skill (`SKILL.md`):** erfasst `CLAUDE_CODE_SESSION_ID` bei Laufstart (+ Temp-Datei); neue **Pausing**-Prozedur (sessionId pushen → `pause-status` → **REPL beenden**, damit `--resume` die eine Session lädt statt eine Kopie); neue **Resuming**-Prozedur (State neu lesen, `running` pushen, ab `currentPhase` weiter, Modus nicht erneut fragen).
+- **„Gleiches Fenster" bewusst verworfen:** Research ergab, dass Pause den Agenten nicht killt (REPL bleibt leben), aber es gibt keinen stabilen/dokumentierten Weg, einen laufenden Vordergrund-REPL von außen zu füttern — der Messaging-Socket (`/tmp/cc-socks/<pid>.sock`) spricht ein privates, undokumentiertes Protokoll, und `attach`/`logs` greifen nur bei `--bg`-Sessions. Daher der stabile `--resume`-Spawn im neuen Fenster.
+- **Tests:** 4 neue (sessionId round-trips, resume-app verweigert wenn nicht paused / ohne sessionId, resume-app ist Non-UI-Tool). 18/18 grün. `npm run deliver` ausgeführt.
 
 ### 2026-11-11 — Komplette Sprach-Umstellung auf Englisch
 
