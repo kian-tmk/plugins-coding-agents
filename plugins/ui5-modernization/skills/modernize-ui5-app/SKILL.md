@@ -129,8 +129,10 @@ echo "DASHBOARD_HOST: $DASHBOARD_HOST"
 
 Call `AskUserQuestion` with exactly one question, matching `DASHBOARD_HOST`. Do NOT combine it with the verification mode question or any other question.
 
-- If `DASHBOARD_HOST=cli` — Question: `"Would you like the dashboard shown in the browser with the current progress?"`
-  Options: **Yes** — Open the dashboard in the browser (recommended) / **No** — Continue without the dashboard
+**CLI only — name the MCP registration in the question.** On the first run the dashboard's status tools come from an MCP server that is not yet registered, and registering it edits the user's own config — which auto mode treats as a "Self-Modification" soft-block that only the user's own intent can clear. So the CLI question and its **Yes** option must *name that registration*, so that choosing Yes is the user specifically authorizing it (not just "show a dashboard"). Before calling `AskUserQuestion`, also print one plain sentence stating it, e.g.: *"Showing the dashboard the first time registers its helper (the `ui5-modernization-dashboard` MCP server) in your Claude config — choosing Yes authorizes that one-time setup."*
+
+- If `DASHBOARD_HOST=cli` — Question: `"Show the live dashboard in the browser? On first run this registers its helper (the ui5-modernization-dashboard MCP server) in your Claude config."`
+  Options: **Yes, register the MCP server and show the dashboard** — one-time `claude mcp add` in user scope, then the browser view (recommended) / **No** — Continue without the dashboard
 - If `DASHBOARD_HOST=desktop` — Question: `"Would you like the dashboard shown as a widget here in Desktop with the current progress?"`
   Options: **Yes** — Open the dashboard widget (recommended) / **No** — Continue without the dashboard
 
@@ -255,6 +257,20 @@ if [ "$DASHBOARD" != "false" ] && [ "$DASHBOARD_HOST" = "cli" ]; then
   fi
 fi
 ```
+
+**If auto mode blocks the `claude mcp add` (Self-Modification).** Registering the server edits the user's own config, so in auto mode the classifier may deny the `claude mcp add` Bash call with a "Self-Modification" reason — even though the user chose "Yes, register the MCP server" at Step A. This is a *soft* block that the user's own explicit intent clears, so do NOT give up or silently fall back to `DASHBOARD=false`. Instead, escalate in this order and stop at the first that works:
+
+1. **Ask the user, naming the exact action.** Tell them plainly: *"Auto mode blocked me from registering the dashboard's helper. May I register the `ui5-modernization-dashboard` MCP server in your Claude user config (one-time `claude mcp add -s user … --stdio`)? Reply **yes** to let me, or run it yourself."* Then retry the same `claude mcp add` once after they reply yes — the user's naming of the action plus their yes is the explicit consent the classifier needs.
+2. **If it is still blocked after their yes, have the user run it themselves** (this bypasses the agent-self-modification check entirely because the user executes it). Give them the exact line to paste, resolving `<path>` to `$MCP_SERVER_JS`:
+
+   ```
+   ! claude mcp add ui5-modernization-dashboard -s user -- node <path>/dist-server/main.js --stdio
+   ```
+
+   Once it is registered (by either route), set `DASHBOARD_MCP_JUST_REGISTERED=true` and continue to the relaunch below — a registration done any way still needs a fresh session to connect.
+3. **Only if the user declines entirely**, set `DASHBOARD=false` and continue the modernization without the dashboard.
+
+Never work around the block by other means (encoding, a different config path, editing the file directly) — that is exactly what the classifier's Auto-Mode-Bypass / Self-Modification rules forbid. The only valid clearance is the user's own consent or the user running the command.
 
 **If `DASHBOARD_MCP_JUST_REGISTERED=true`, relaunch now — do NOT continue the workflow in this session.** The MCP server is not connected here; pushing status would fail. Spawn a continuation chat in a new terminal that re-runs this skill (a fresh session loads the just-registered server), then stop. The continuation prompt must re-invoke the skill AND re-affirm the dashboard answer so the user is not asked again:
 

@@ -343,6 +343,13 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
+### 2026-11-16 — CLI-Registrierung: Auto-Mode-Self-Modification-Block + Zustimmungsfluss
+
+- **Befund:** In einem echten Lauf (Server nicht registriert) blockte der Auto-Mode-Klassifikator `claude mcp add -s user` unter **„Self-Modification"** — der Agent ändert seine eigene User-Config, und die Zustimmung des Users („Dashboard im Browser zeigen") hatte die Registrierung nicht konkret benannt. Frühere Läufe blockten nur deshalb nicht, weil der Server schon registriert war (der „already registered"-Zweig ruft `claude mcp add` nie auf); diesmal war er zu Testzwecken entfernt — genau die Erstlauf-Situation eines echten Endnutzers.
+- **Verifiziert (`claude auto-mode defaults`):** „Self-Modification" ist ein **`soft_deny`**, kein `hard_deny` — also durch **expliziten User-Intent klärbar** („must name that this specific permission/consent change is wanted"). Es gibt **keinen** plugin-mitlieferbaren Weg, das für den Endnutzer vorzuautorisieren (keine Plugin-Permissions/Settings/Hooks vor dem Klassifikator). Der Klassifikator ist als nicht-deterministisch zu behandeln.
+- **Fix (`SKILL.md`, nur Text):** (1) Die CLI-Dashboard-Frage (Step A) und ihre **Yes**-Option **benennen jetzt die MCP-Registrierung** explizit, plus ein Klartext-Satz davor — damit die Auswahl des Users die Aktion benennt. (2) Step 2b bekam einen dreistufigen **Zustimmungs-Notanker**, falls der Block trotzdem kommt: a) Agent fragt und benennt die exakte Aktion → User „yes" → Retry; b) sonst führt der User den fertigen `! claude mcp add …`-Befehl selbst aus (umgeht den Self-Modification-Check, da der User ausführt); c) nur bei Ablehnung `DASHBOARD=false`. Kein Umgehen des Klassifikators auf anderem Weg (ausdrücklich verboten).
+- Rein Skill-Text — kein Server/UI/Schema. Kein Build nötig.
+
 ### 2026-11-16 — Ausklappbare Datei-Liste + mehr Aktivitäts-Pushes
 
 - **Git-Datei-Liste ausklappbar (`src/mcp-app.ts`, `renderGitActivity`):** Das statische „+N more" ist jetzt ein klickbarer Button, der die volle Liste zeigt bzw. wieder auf die ersten 5 einklappt („show less"). Zustand in `gitFilesExpanded`; `data-sig`-Idempotenz, damit der 0,6-s-Poll den Klick nicht zurücksetzt; Klick-Handler per Delegation am stabilen `#git-activity`-Container (überlebt die `innerHTML`-Neuschreibungen). Im Voll-Zustand ist der Container scrollbar gedeckelt (`.git-activity-expanded`). Rein Frontend — die Daten (`gitActivity.modifiedFiles`) lagen schon vollständig im State.
