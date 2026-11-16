@@ -364,6 +364,104 @@ test("sessionId is a writable field that round-trips through update-status", asy
   assert.equal((pushed.structuredContent as any).sessionId, "133dc163-2662-420b-ab64-a32482d13438");
 });
 
+test("activityEvent sets currentActivity, appends to history, and is consumed", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-activity-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "activity-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  // Start a run, then push an activity event.
+  await client.callTool({ name: "update-status", arguments: { status: "running", linterBaseline: 10 } });
+  const r1 = (await client.callTool({
+    name: "update-status",
+    arguments: { activityEvent: { text: "Launching 2 fix sub-agents", detail: ["fix manifest.json", "fix Component.js"] } },
+  })).structuredContent as any;
+
+  assert.equal(r1.currentActivity, "Launching 2 fix sub-agents", "currentActivity set from event.text");
+  assert.ok(!("activityEvent" in r1) || r1.activityEvent == null, "activityEvent is consumed (not persisted)");
+  assert.equal(r1.activityHistory.length, 1, "one history entry appended");
+  assert.equal(r1.activityHistory[0].text, "Launching 2 fix sub-agents");
+  assert.deepEqual(r1.activityHistory[0].detail, ["fix manifest.json", "fix Component.js"]);
+  assert.ok(typeof r1.activityHistory[0].ts === "string" && r1.activityHistory[0].ts.length > 0, "entry is timestamped");
+
+  // A second event prepends (newest first).
+  const r2 = (await client.callTool({
+    name: "update-status",
+    arguments: { activityEvent: { text: "Batch complete — 5 resolved" } },
+  })).structuredContent as any;
+  assert.equal(r2.activityHistory.length, 2);
+  assert.equal(r2.activityHistory[0].text, "Batch complete — 5 resolved", "newest is at index 0");
+  assert.equal(r2.activityHistory[1].text, "Launching 2 fix sub-agents");
+
+  // A push without an event leaves the history untouched.
+  const r3 = (await client.callTool({ name: "update-status", arguments: { currentActivity: "idle tick" } })).structuredContent as any;
+  assert.equal(r3.activityHistory.length, 2, "history unchanged when no event pushed");
+});
+
+test("activityHistory is server-owned: a pushed value is ignored, and the cap holds", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-activity-cap-test-"));
+  const stateFile = path.join(directory, "state.json");
+  const server = createServer({ stateFile });
+  const client = new Client({ name: "activity-cap-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  await client.callTool({ name: "update-status", arguments: { status: "running" } });
+
+  // Agent tries to push its own activityHistory — must be ignored (server-owned).
+  const forged = await client.callTool({
+    name: "update-status",
+    arguments: { activityEvent: { text: "real event" }, activityHistory: [{ ts: "x", text: "forged" }, { ts: "y", text: "forged2" }] },
+  });
+  const fh = (forged.structuredContent as any).activityHistory;
+  assert.equal(fh.length, 1, "pushed activityHistory ignored; only the real event is appended");
+  assert.equal(fh[0].text, "real event");
+
+  // Cap: push well over 50 events, expect exactly 50 with the newest kept.
+  for (let i = 0; i < 60; i++) {
+    await client.callTool({ name: "update-status", arguments: { activityEvent: { text: `event ${i}` } } });
+  }
+  const capped = (await client.callTool({ name: "get-status", arguments: {} })).structuredContent as any;
+  assert.equal(capped.activityHistory.length, 50, "history capped at 50");
+  assert.equal(capped.activityHistory[0].text, "event 59", "newest kept");
+  assert.equal(capped.activityHistory[49].text, "event 10", "oldest within cap; earlier ones dropped");
+});
+
+test("a new run clears the activity history", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ui5-activity-newrun-test-"));
+  const server = createServer({ stateFile: path.join(directory, "state.json") });
+  const client = new Client({ name: "activity-newrun-test", version: "1.0.0" });
+  t.after(async () => {
+    await client.close();
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  await client.callTool({ name: "update-status", arguments: { status: "running", startedAt: "2026-11-02T12:00:00.000Z" } });
+  await client.callTool({ name: "update-status", arguments: { activityEvent: { text: "first run event" } } });
+  await client.callTool({ name: "reset-status", arguments: {} });
+
+  // Fresh run (idle → running) must start with an empty history.
+  const fresh = (await client.callTool({ name: "update-status", arguments: { status: "running" } })).structuredContent as any;
+  assert.deepEqual(fresh.activityHistory, [], "history reset for a new run");
+});
+
 test("resume-app refuses when the run is not paused (no spawn)", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "ui5-resumeapp-test-"));
   const stateFile = path.join(directory, "state.json");
@@ -696,7 +794,7 @@ test("declared status schemas survive host filtering and two stdio servers with 
   assert.deepEqual(declaredProperties(payload, update.inputSchema), payload);
   await widget.callTool({ name: "open-dashboard", arguments: {} });
   const result = await agent.callTool({ name: "update-status", arguments: declaredProperties(payload, update.inputSchema) });
-  const expected = { ...payload, stage: null, startedAt: result.structuredContent?.startedAt, phaseStartedAt: result.structuredContent?.phaseStartedAt };
+  const expected = { ...payload, stage: null, activityHistory: [], startedAt: result.structuredContent?.startedAt, phaseStartedAt: result.structuredContent?.phaseStartedAt };
   assert.notEqual(expected.startedAt, payload.startedAt);
   assert.equal(expected.phaseStartedAt, expected.startedAt);
   assert.deepEqual(declaredProperties(result.structuredContent, update.outputSchema), expected);

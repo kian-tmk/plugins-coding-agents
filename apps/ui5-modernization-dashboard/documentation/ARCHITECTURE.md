@@ -103,6 +103,7 @@ Wichtigste Felder (TypeScript-Schema: `ModernizationState` in `src/mcp-app.ts`):
 | `originalBranch`, `workBranch` | Git-Branches für reset-app (Original-Branch des Users, Modernisierungs-Branch) |
 | `linterBaseline`, `totalFindings`, `findingsFixed`, `findingsRemaining` | Finding-Zähler |
 | `currentPhase`, `currentActivity`, `overallProgress` | aktueller Fortschritt |
+| `activityEvent`, `activityHistory` | Reichhaltige Aktivität. `activityEvent` ist **input-only** (`{text, detail?}`): der Agent pusht EIN Ereignis, der Server setzt daraus `currentActivity=text`, hängt einen Zeitstempel-Eintrag an `activityHistory` an und verwirft `activityEvent` (nie persistiert). `activityHistory` ist **server-verwaltet** (newest-first, auf 50 gedeckelt, bei neuem Lauf geleert) — ein vom Agenten gepushter Wert wird ignoriert. Treibt den „now"-Block (Überschrift + Stichpunkte) und das „Show full history"-Popup |
 | `startedAt`, `phaseStartedAt`, `completedAt`, `stoppedAt`, `stopReason`, `elapsedSeconds` | Zeitanker für die Timer + Stop-Info |
 | `stopRequested`, `pauseRequested` | reine Button-Signale (Stop/Pause), ändern `status` nicht selbst — der Agent liest sie aus dem `update-status`-Rückgabewert und reagiert am nächsten Checkpoint |
 | `sessionId`, `resumeRequested`, `resumeNeedsAttention` | Resume-Felder (CLI). `sessionId` = `CLAUDE_CODE_SESSION_ID` des Laufs (das `claude --resume`-Ziel), vom Skill bei Start und erneut beim Pausieren gepusht — nie ein Token, nur die ID. `resumeRequested` = Button-Signal (Server löscht es nach dem Spawn). `resumeNeedsAttention` = der fortgesetzte Lauf hängt an einer Permission-Abfrage im Terminal → Paused-Screen zeigt einen Hinweis |
@@ -165,7 +166,7 @@ Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen 
 Eine Single-Page-App mit drei HTML-Screens, umgeschaltet nach `state.status`:
 
 - **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: allgemeiner Fehler (`error`), server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Früh-Phase „Modernisierung gestartet"/„Linter läuft" (via `stage`, `neutral`) und sonst „keine Modernisierung". Jeder Zustand mit eigener Illustration + Header-Icon. **Paused-Screen** (`warning`) mit **Resume**- und **Stop**-Button (Resume funktioniert in CLI, s. Resume-Szenario); bei `resumeNeedsAttention` ein „needs your attention"-Hinweis. Alle Texte Englisch (seit 2026-11-11).
-- **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität, Git-Commits.
+- **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität (strukturierter „now"-Block: Überschrift + Stichpunkte aus `activityHistory[0]`, plus „Show full history"-Popup mit dem gesamten Verlauf), Git-Commits.
 - **Completed / Stopped** — Zusammenfassung: Phasen-Tabelle mit Gate-Ergebnissen, Statistiken, Links zu Report/Issues (Markdown-Viewer), Reset-Button. Bei `stopped`: Stop-Grund statt Erfolgs-Header, Remaining-Findings hervorgehoben. Beide Status nutzen denselben HTML-Screen (`screen-completed`).
 
 Gebaut mit **UI5 Web Components** (`@ui5/webcomponents`, `-fiori`, `-icons`). Gezielte Imports, kein `Assets.js`. Themes (`sap_horizon`/`sap_horizon_dark`) per `registerThemePropertiesLoader`, umgeschaltet nach Host-Context. Responsive Layout (CSS-Media-Queries, Breakpoints 700px/500px).
@@ -341,6 +342,16 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-16 — Reichhaltige Aktivität: `activityEvent` + Verlauf-Popup
+
+- **Problem:** Im Browser hing das Dashboard gefühlt hinterher und zeigte nur eine karge `currentActivity`-Zeile (oft eine Datei-Litanei oder „Phase 1 running"). Gewünscht: das, was der Agent ohnehin im Chat sagt („starte diese 3 Sub-Agenten mit diesen Aufgaben"), auch im Dashboard — strukturiert + als abrufbarer Verlauf.
+- **Datenmodell (`state-schema.ts`):** zwei neue Felder. `activityEvent` (**input-only**, `{text, detail?}`) — der Agent pusht EIN kleines Ereignis. `activityHistory` (**server-verwaltet**, newest-first, Cap 50) — der Verlauf.
+- **Server (`writeState`, `server.ts`):** Aus einem `activityEvent`-Push setzt der Server `currentActivity=text`, hängt `{ts,text,detail}` vorne an `activityHistory` an (gedeckelt) und verwirft `activityEvent` (nie persistiert). `activityHistory` wird nie aus dem Patch übernommen (server-owned) und bei neuem Lauf geleert. Ein winziger Push erzeugt also „now"-Zeile + Verlaufseintrag zugleich; kein vom Agenten gepflegtes Array, kein Race.
+- **Frontend (`mcp-app.html`/`.ts`/`.css`):** „Current activity"-Card um eine Stichpunkt-Liste (`activity-detail` aus `activityHistory[0].detail`) und einen „Show full history"-Link erweitert. Neues History-Overlay (spiegelt das Markdown-Overlay-Muster, kein neues Dialog-Widget) listet den Verlauf newest-first mit Zeitstempeln. Render idempotent (`data-sig`), Popup nur bei offenem Zustand aktualisiert.
+- **Skill (`SKILL.md`):** neue `activityEvent`-Push-Konvention mit Beispielen (Sub-Agenten-Fan-out, Batch-Ergebnisse, Commit) — reichere Inhalte statt nur häufigerer karger Strings. `activityHistory` nie selbst pushen.
+- **Nur Haupt-Agent pusht.** Sub-Agenten-Pushes verworfen: MCP-Server werden nicht an Sub-Agenten vererbt (jede generische Fix-Skill müsste umgebaut werden) und `writeState` ist read-merge-write → parallele Pusher würden sich überschreiben. Der Haupt-Agent kündigt die Batch-Aufgaben vor dem Start an; das Git-Polling zeigt die Datei-Änderungen während des Batches.
+- **Tests:** 3 neue (Append/Consume, Server-owned + Cap 50, Reset bei neuem Lauf). 21/21 grün. Build + deliver.
 
 ### 2026-11-13 — Browser-Poll auf 0,6 s (mode-abhängig)
 

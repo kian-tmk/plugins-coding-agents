@@ -132,8 +132,10 @@
               <span class="activity-dot"></span>
               <span id="activity-text">—</span>
             </div>
+            <ul id="activity-detail" class="activity-detail"></ul>
             <div id="git-activity" class="git-activity" style="display:none"></div>
             <div id="phase-commits" class="phase-commits"></div>
+            <button id="activity-history-btn" class="activity-history-link" style="display:none">Show full history</button>
           </div>
         </ui5-card>
 
@@ -215,6 +217,17 @@
             <button class="btn-ghost md-close" id="md-close">✕ Close</button>
           </div>
           <div id="md-body" class="md-body"></div>
+        </div>
+      </div>
+
+      <!-- ═══ ACTIVITY HISTORY OVERLAY ═══ -->
+      <div id="history-overlay" class="md-overlay hidden">
+        <div class="md-panel">
+          <div class="md-header">
+            <span class="md-title">Activity history</span>
+            <button class="btn-ghost md-close" id="history-close">✕ Close</button>
+          </div>
+          <div id="history-body" class="history-body"></div>
         </div>
       </div>
 

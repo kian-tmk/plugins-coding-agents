@@ -164,6 +164,8 @@ interface ModernizationState {
   sessionId: string | null;
   resumeRequested: boolean | null;
   resumeNeedsAttention: boolean | null;
+  activityEvent: { text: string; detail?: string[] } | null;
+  activityHistory: Array<{ ts: string; text: string; detail?: string[] }> | null;
   phaseStartedAt: string | null;
   gitActivity: GitActivity | null;
   lastGitActivityAt: string | null;
@@ -197,6 +199,37 @@ const mdClose = document.getElementById("md-close")!;
 
 mdClose.addEventListener("click", () => mdOverlay.classList.add("hidden"));
 mdOverlay.addEventListener("click", (e) => { if (e.target === mdOverlay) mdOverlay.classList.add("hidden"); });
+
+// Activity-history overlay (mirrors the markdown overlay pattern). The feed is held
+// in `latestActivityHistory` and rendered lazily — only when the popup is open.
+const historyOverlay = document.getElementById("history-overlay")!;
+const historyBody = document.getElementById("history-body")!;
+const historyClose = document.getElementById("history-close")!;
+let latestActivityHistory: Array<{ ts: string; text: string; detail?: string[] }> = [];
+
+historyClose.addEventListener("click", () => historyOverlay.classList.add("hidden"));
+historyOverlay.addEventListener("click", (e) => { if (e.target === historyOverlay) historyOverlay.classList.add("hidden"); });
+document.getElementById("activity-history-btn")?.addEventListener("click", () => {
+  renderHistoryBody();
+  historyOverlay.classList.remove("hidden");
+});
+
+function renderHistoryBody() {
+  if (latestActivityHistory.length === 0) {
+    historyBody.innerHTML = `<p class="history-empty">No activity recorded yet.</p>`;
+    return;
+  }
+  historyBody.innerHTML = latestActivityHistory.map((e) => {
+    const time = e.ts ? new Date(e.ts).toLocaleTimeString("en-US") : "";
+    const bullets = Array.isArray(e.detail) && e.detail.length
+      ? `<ul class="history-detail">${e.detail.map(d => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`
+      : "";
+    return `<div class="history-entry">
+      <div class="history-entry-head"><span class="history-ts">${escapeHtml(time)}</span><span class="history-text">${escapeHtml(e.text)}</span></div>
+      ${bullets}
+    </div>`;
+  }).join("");
+}
 
 // Preferred inline width for the dashboard. Reported to the host on connect so
 // the panel renders a bit wider than the default.
@@ -414,6 +447,38 @@ function escapeHtml(s: string): string {
   return d.innerHTML;
 }
 
+// Render the structured "now" detail (bullets under the current-activity line) and the
+// "Show full history" trigger from the server-owned activityHistory. Idempotent via
+// data-sig so the fast poll doesn't rebuild the DOM every tick; also refreshes the
+// history popup in place when it happens to be open.
+function renderActivityDetail(state: ModernizationState) {
+  const history = Array.isArray(state.activityHistory) ? state.activityHistory : [];
+  latestActivityHistory = history;
+
+  const detailEl = document.getElementById("activity-detail");
+  const btn = document.getElementById("activity-history-btn");
+  const newest = history[0];
+  const detail = newest && Array.isArray(newest.detail) ? newest.detail : [];
+
+  if (detailEl) {
+    const sig = JSON.stringify(detail);
+    if (detailEl.getAttribute("data-sig") !== sig) {
+      detailEl.innerHTML = detail.map(d => `<li>${escapeHtml(d)}</li>`).join("");
+      detailEl.setAttribute("data-sig", sig);
+    }
+  }
+  if (btn) btn.style.display = history.length > 0 ? "" : "none";
+
+  // Keep an open popup live without rebuilding it on every poll.
+  if (!historyOverlay.classList.contains("hidden")) {
+    const sig = String(history.length) + "|" + (newest?.ts ?? "");
+    if (historyBody.getAttribute("data-sig") !== sig) {
+      renderHistoryBody();
+      historyBody.setAttribute("data-sig", sig);
+    }
+  }
+}
+
 function renderGitActivity(gitActivity: GitActivity | null, phases: PhaseState[]) {
   const container = document.getElementById("git-activity")!;
   if (!container) return;
@@ -542,6 +607,7 @@ function renderDashboard(state: ModernizationState) {
 
   // Activity + live git file changes
   setText("activity-text", state.currentActivity || "—");
+  renderActivityDetail(state);
   renderGitActivity(state.gitActivity ?? null, state.phases);
 
   // Phase commit list

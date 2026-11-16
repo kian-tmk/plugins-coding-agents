@@ -393,6 +393,39 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 
 **Rule:** push `currentActivity` whenever the agent switches tasks — before launching a sub-agent, after it returns, before running the linter, before committing. Every meaningful action should be visible in the dashboard within seconds.
 
+#### Richer activity events (`activityEvent`) — give the dashboard what you'd say in chat
+
+The dashboard has a structured activity view (a "now" line with bullet points) plus a full
+history popup. To feed it, push an **`activityEvent`** instead of just overwriting the bare
+`currentActivity` string. Shape: `{"activityEvent": {"text": "<one present-tense sentence>", "detail": ["…", "…"]}}`.
+
+- The **server** does the rest from that one small push: it sets `currentActivity` to `text`
+  (so the plain line still works) **and** appends a timestamped entry to the history. Keep the
+  push tiny — one sentence plus a few bullets. **Never** push `activityHistory` yourself; it is
+  server-managed and a value you send is ignored.
+- Use `detail[]` for exactly the things you'd narrate in chat — above all the **sub-agents you
+  are launching and their tasks**, or the files/fixes you are about to touch. Prefer a heading +
+  bullets over a comma-separated file litany crammed into one line.
+- It composes with a normal status push: a big phase push (with `phases`, `currentPhase`, …) may
+  also carry `activityEvent` in the same call — the server handles both in one write.
+
+Examples:
+
+```bash
+# Before a parallel fix batch — list the sub-agents and what each one fixes:
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"activityEvent\":{\"text\":\"Launching 3 fix sub-agents in parallel\",\"detail\":[\"fix-js-globals — sap.* globals\",\"fix-xml-globals — XML views\",\"fix-pseudo-modules — enum/DataType imports\"]},\"phases\":\$PHASES_JSON}"
+
+# After the batch returns — summarize results:
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"activityEvent\":{\"text\":\"Parallel batch complete — 9 findings resolved\",\"detail\":[\"js-globals: 4\",\"xml-globals: 3\",\"pseudo-modules: 2\"]},\"phases\":\$PHASES_JSON}"
+
+# Before a commit:
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"activityEvent\":{\"text\":\"Committing Phase 2 (Foundation)\",\"detail\":[\"manifest.json\",\"Component.js\"]},\"phases\":\$PHASES_JSON}"
+```
+
+Fall back to a plain `currentActivity` string only for trivial one-liners with no detail. For
+anything the user would want to follow — sub-agent fan-out, multi-file steps, batch results —
+use `activityEvent` with bullets.
+
 ### Checking for a stop request (dashboard Stop button)
 
 The dashboard has a **Stop button** in the header. Clicking it does **not** stop the run by

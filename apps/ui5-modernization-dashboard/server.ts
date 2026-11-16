@@ -91,6 +91,31 @@ async function writeState(stateFile: string, patch: Record<string, unknown>): Pr
     }
   }
 
+  // Activity log: the agent pushes ONE `activityEvent` ({text, detail?}); the server owns
+  // the history so a tiny push produces both the "now" line and a history entry, and no
+  // client-managed array can race or drift. activityHistory is never taken from the patch,
+  // and activityEvent is input-only — it is consumed here and never persisted.
+  const ACTIVITY_HISTORY_CAP = 50;
+  const existingHistory = Array.isArray(existing.activityHistory)
+    ? existing.activityHistory as Array<Record<string, unknown>>
+    : [];
+  const event = fields.activityEvent as { text?: unknown; detail?: unknown } | null | undefined;
+  if (event && typeof event.text === "string") {
+    const entry: Record<string, unknown> = { ts: now, text: event.text };
+    if (Array.isArray(event.detail)) entry.detail = event.detail;
+    merged.currentActivity = event.text;                 // keep the legacy single-line renderer fed
+    merged.activityHistory = isNewRun                     // newest first, capped
+      ? [entry]
+      : [entry, ...existingHistory].slice(0, ACTIVITY_HISTORY_CAP);
+  } else if (isNewRun) {
+    merged.activityHistory = [];                          // a fresh run starts with an empty log
+  } else if ("activityHistory" in existing) {
+    merged.activityHistory = existingHistory;             // carry forward (server-owned — ignore any pushed value)
+  } else {
+    delete merged.activityHistory;                        // never set yet → don't litter the state
+  }
+  delete merged.activityEvent;                            // input-only: consumed, never persisted
+
   await saveState(merged, stateFile);
   return merged;
 }

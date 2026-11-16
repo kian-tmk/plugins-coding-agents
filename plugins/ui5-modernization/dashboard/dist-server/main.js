@@ -61480,6 +61480,19 @@ var stateSchema = external_exports.object({
   resumeNeedsAttention: external_exports.boolean().nullable().describe(
     "Set true by a resumed run that stalled on a new permission prompt in its terminal; the dashboard surfaces a 'needs attention' hint. Cleared once the run is visibly moving again."
   ),
+  activityEvent: external_exports.object({
+    text: external_exports.string(),
+    detail: external_exports.array(external_exports.string()).optional()
+  }).nullable().describe(
+    "Push ONE activity event: {text, detail?}. The server sets currentActivity=text AND appends a timestamped entry to activityHistory, then clears this field. Keep it to ~one sentence plus a few bullet points (e.g. the sub-agents you are launching and their tasks). Do NOT resend the whole history \u2014 just the one new event."
+  ),
+  activityHistory: external_exports.array(external_exports.object({
+    ts: external_exports.string(),
+    text: external_exports.string(),
+    detail: external_exports.array(external_exports.string()).optional()
+  })).nullable().describe(
+    "Server-managed activity log (newest first, capped). Appended from each activityEvent push \u2014 never push this directly; a value sent here is ignored."
+  ),
   phaseStartedAt: external_exports.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: external_exports.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: external_exports.enum(["pending", "merged", "skipped"]).nullable(),
@@ -61585,7 +61598,7 @@ var SERVER_FILE = fileURLToPath(import.meta.url);
 var PROJECT_DIR = SERVER_FILE.endsWith(".ts") ? path2.dirname(SERVER_FILE) : path2.resolve(path2.dirname(SERVER_FILE), "..");
 var DIST_DIR = path2.join(PROJECT_DIR, "dist");
 var resourceUri = "ui://ui5-modernization/mcp-app.html";
-var SERVER_BUILD = true ? "97613c1 \xB7 2026-11-13T19:10" : "dev";
+var SERVER_BUILD = true ? "9cee14b \xB7 2026-11-16T09:53" : "dev";
 async function writeState2(stateFile, patch) {
   const existing = await readState(stateFile) ?? {};
   const resuming = patch.status === "running" && existing.status === "paused";
@@ -61624,6 +61637,22 @@ async function writeState2(stateFile, patch) {
       }
     }
   }
+  const ACTIVITY_HISTORY_CAP = 50;
+  const existingHistory = Array.isArray(existing.activityHistory) ? existing.activityHistory : [];
+  const event = fields.activityEvent;
+  if (event && typeof event.text === "string") {
+    const entry = { ts: now, text: event.text };
+    if (Array.isArray(event.detail)) entry.detail = event.detail;
+    merged.currentActivity = event.text;
+    merged.activityHistory = isNewRun ? [entry] : [entry, ...existingHistory].slice(0, ACTIVITY_HISTORY_CAP);
+  } else if (isNewRun) {
+    merged.activityHistory = [];
+  } else if ("activityHistory" in existing) {
+    merged.activityHistory = existingHistory;
+  } else {
+    delete merged.activityHistory;
+  }
+  delete merged.activityEvent;
   await saveState(merged, stateFile);
   return merged;
 }

@@ -56,6 +56,21 @@ export const stateSchema = z.object({
     "Set true by a resumed run that stalled on a new permission prompt in its terminal; the "
     + "dashboard surfaces a 'needs attention' hint. Cleared once the run is visibly moving again.",
   ),
+  activityEvent: z.object({
+    text: z.string(),
+    detail: z.array(z.string()).optional(),
+  }).nullable().describe(
+    "Push ONE activity event: {text, detail?}. The server sets currentActivity=text AND appends a "
+    + "timestamped entry to activityHistory, then clears this field. Keep it to ~one sentence plus a "
+    + "few bullet points (e.g. the sub-agents you are launching and their tasks). Do NOT resend the "
+    + "whole history — just the one new event.",
+  ),
+  activityHistory: z.array(z.object({
+    ts: z.string(), text: z.string(), detail: z.array(z.string()).optional(),
+  })).nullable().describe(
+    "Server-managed activity log (newest first, capped). Appended from each activityEvent push — "
+    + "never push this directly; a value sent here is ignored.",
+  ),
   phaseStartedAt: z.string().nullable().describe("Server-managed phase start time; set currentPhase instead."),
   mergedAt: z.string().nullable().describe("Server-managed merge completion time; omit from updates."),
   mergeStatus: z.enum(["pending", "merged", "skipped"]).nullable(),
