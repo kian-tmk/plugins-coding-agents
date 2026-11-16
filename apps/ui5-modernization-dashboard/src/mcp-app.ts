@@ -479,30 +479,68 @@ function renderActivityDetail(state: ModernizationState) {
   }
 }
 
-function renderGitActivity(gitActivity: GitActivity | null, phases: PhaseState[]) {
+// Whether the modified-files list is expanded to show all files (vs. capped at MAX_FILES
+// with a "+N more" affordance). Toggled by the click handler below; persists across polls.
+let gitFilesExpanded = false;
+let gitActivityDelegated = false;
+// Cached inputs so the delegated toggle can re-render with the current data.
+let lastGitActivity: GitActivity | null = null;
+let lastGitPhases: PhaseState[] = [];
+
+function renderGitActivity(gitActivity: GitActivity | null, phases: PhaseState[], force = false) {
   const container = document.getElementById("git-activity")!;
   if (!container) return;
+  lastGitActivity = gitActivity;
+  lastGitPhases = phases;
 
   const modFiles = gitActivity?.modifiedFiles ?? [];
   // Filter out files that are already part of committed phases
   const committedPhases = phases.filter(p => p.status === "completed" || p.status === "failed");
 
   if (modFiles.length === 0) {
-    container.innerHTML = "";
+    if (container.innerHTML !== "") { container.innerHTML = ""; container.removeAttribute("data-sig"); }
     container.style.display = "none";
     return;
   }
 
   container.style.display = "";
   const MAX_FILES = 5;
-  const shown = modFiles.slice(0, MAX_FILES);
   const extra = modFiles.length - MAX_FILES;
-  const fileList = shown.map(f => {
+
+  // Idempotent render: the 0.6s poll must not rebuild (and reset) the list — or an open
+  // "show all" would snap back under the user's click. Only rewrite when the file set or
+  // the expanded state actually changed. Delegated click handler (bound once) survives it.
+  const sig = `${modFiles.length}:${gitFilesExpanded}:${modFiles.join("|")}`;
+  if (!force && container.getAttribute("data-sig") === sig) return;
+
+  const visible = gitFilesExpanded ? modFiles : modFiles.slice(0, MAX_FILES);
+  const fileList = visible.map(f => {
     const short = f.split("/").slice(-2).join("/");
     return `<span class="git-file">${escapeHtml(short)}</span>`;
   }).join(" ");
-  const moreText = extra > 0 ? ` <span class="git-file-more">+${extra} more</span>` : "";
-  container.innerHTML = `<span class="git-activity-icon">✏</span> ${fileList}${moreText}`;
+
+  let toggle = "";
+  if (gitFilesExpanded && modFiles.length > MAX_FILES) {
+    toggle = ` <button type="button" class="git-file-more-btn" data-git-toggle>show less</button>`;
+  } else if (extra > 0) {
+    toggle = ` <button type="button" class="git-file-more-btn" data-git-toggle>+${extra} more</button>`;
+  }
+
+  container.innerHTML = `<span class="git-activity-icon">✏</span> ${fileList}${toggle}`;
+  container.classList.toggle("git-activity-expanded", gitFilesExpanded);
+  container.setAttribute("data-sig", sig);
+
+  // Bind the toggle once via delegation so it survives the innerHTML rewrites above.
+  if (!gitActivityDelegated) {
+    container.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      if (target && target.closest("[data-git-toggle]")) {
+        gitFilesExpanded = !gitFilesExpanded;
+        renderGitActivity(lastGitActivity, lastGitPhases, true);
+      }
+    });
+    gitActivityDelegated = true;
+  }
 }
 
 function renderDashboard(state: ModernizationState) {

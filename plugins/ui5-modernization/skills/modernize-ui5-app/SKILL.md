@@ -393,6 +393,8 @@ This replaces the old HTTP/curl push: it works in the desktop sandbox (which blo
 
 **Rule:** push `currentActivity` whenever the agent switches tasks — before launching a sub-agent, after it returns, before running the linter, before committing. Every meaningful action should be visible in the dashboard within seconds.
 
+**Announce long operations BEFORE they run, not after.** Before any step that blocks for more than a second or two — running the linter (`--fix` or `--details`), a verification-gate test run, a sub-agent batch, a `git commit` — push a status that says it is *starting* (e.g. "Running linter…", "Committing Phase 2…"). Reporting only *after* the step finishes leaves the dashboard looking frozen for the whole duration — the exact gap users notice. A push is fire-and-forget and cheap; err on the side of one too many rather than a silent window.
+
 #### Richer activity events (`activityEvent`) — give the dashboard what you'd say in chat
 
 The dashboard has a structured activity view (a "now" line with bullet points) plus a full
@@ -638,6 +640,12 @@ print(json.dumps(phases))
 push_status "{\"status\":\"running\",\"currentPhase\":1,\"currentActivity\":\"Phase 1: Mechanical Baseline\",\"phaseStartedAt\":\"$PHASE_1_STARTED_AT\",\"phases\":$PHASES_JSON}"
 ```
 
+**Announce the autofix + linter run before it starts** (it can take a few seconds — don't leave the dashboard silent):
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":1,\"activityEvent\":{\"text\":\"Running UI5 linter autofix\",\"detail\":[\"npx @ui5/linter --fix\",\"re-running linter to count remaining findings\"]},\"phases\":$PHASES_JSON}"
+```
+
 ```bash
 npx @ui5/linter --fix
 npx @ui5/linter --details 2>&1 | tee "${TMPDIR:-/tmp}/ui5-linter-post-autofix.txt"
@@ -726,7 +734,7 @@ push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Ph
 
 Push before launching the sub-agent:
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":2,\"currentActivity\":\"Fixing manifest.json...\",\"phases\":$PHASES_JSON}"
+push_status "{\"status\":\"running\",\"currentPhase\":2,\"activityEvent\":{\"text\":\"Fixing manifest.json\",\"detail\":[\"version + minUI5Version\",\"deprecated libraries / components\",\"view & model types\"]},\"phases\":$PHASES_JSON}"
 ```
 
 Launch sub-agent with `fix-manifest-json`. Pass all `manifest.json` errors from rules: `no-outdated-manifest-version`, `no-legacy-ui5-version-in-manifest`, `no-deprecated-library`, `no-deprecated-component`, `no-removed-manifest-property`, plus `no-deprecated-api` with "view type"/"model type"/"resources/js".
@@ -801,9 +809,9 @@ push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Ph
 
 ### Step 3.1: Parallel batch
 
-Push before launching:
+Push before launching (use `activityEvent` so the dashboard lists the parallel sub-agents, not one crammed line):
 ```bash
-push_status "{\"status\":\"running\",\"currentPhase\":3,\"currentActivity\":\"Fixing JS globals, XML globals and pseudo-modules in parallel...\",\"phases\":$PHASES_JSON}"
+push_status "{\"status\":\"running\",\"currentPhase\":3,\"activityEvent\":{\"text\":\"Launching 3 fix sub-agents in parallel\",\"detail\":[\"fix-js-globals — JS no-globals + routed no-deprecated-api\",\"fix-pseudo-modules — no-pseudo-modules / no-implicit-globals\",\"fix-xml-globals — XML no-globals / no-ambiguous-event-handler\"]},\"phases\":$PHASES_JSON}"
 ```
 
 Launch sub-agents in parallel (up to 8 concurrent):
@@ -887,11 +895,25 @@ push_status "{\"status\":\"running\",\"currentPhase\":4,\"currentActivity\":\"Ph
 
 ### Execution
 
-Launch sub-agents in parallel (up to 8 concurrent). Use the Sub-Agent Prompt Template. Group files by skill.
+**Push before launching the batch** (name the deprecated-API groups you are fixing), and **again after it returns** — Phase 4 otherwise looks frozen in the dashboard for the whole batch:
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"activityEvent\":{\"text\":\"Launching deprecated-API fix sub-agents\",\"detail\":[\"fix-deprecated-controls\",\"fix-partially-deprecated-apis\",\"fix-table-row-mode\"]},\"phases\":$PHASES_JSON}"
+```
+
+Launch sub-agents in parallel (up to 8 concurrent). Use the Sub-Agent Prompt Template. Group files by skill. (List only the skills you actually launch in the `detail` array above.)
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"activityEvent\":{\"text\":\"Deprecated-API batch complete — verifying\"},\"phases\":$PHASES_JSON}"
+```
 
 ### Step 4.2: Regression check
 
-Re-run linter. Second batch for new Phase 4 errors only.
+**Announce the re-run**, then re-run the linter. Second batch for new Phase 4 errors only.
+
+```bash
+push_status "{\"status\":\"running\",\"currentPhase\":4,\"activityEvent\":{\"text\":\"Running linter regression check (Phase 4)\"},\"phases\":$PHASES_JSON}"
+```
 
 ### Phase 4 commit + gate
 

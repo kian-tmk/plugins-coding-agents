@@ -166,7 +166,7 @@ Ein Node-Prozess, der in **zwei Transport-Modi** laufen kann — beide bedienen 
 Eine Single-Page-App mit drei HTML-Screens, umgeschaltet nach `state.status`:
 
 - **Idle** — genereller Zustands-/Info-Screen auf Basis von `ui5-illustrated-message`. `setIdleMessage` ist ein Varianten-Helper (`neutral`/`success`/`error`/`warning`, Icon + Akzentfarbe, optionaler Action-Button), `renderIdle(state)` wählt nach Priorität: allgemeiner Fehler (`error`), server-nicht-erreichbar (`error`), Reset/Merge-Bestätigung aus `lastOutcome` (`success`, reload-fest), Stale-Run >24h (`warning` + Reset-Button), Früh-Phase „Modernisierung gestartet"/„Linter läuft" (via `stage`, `neutral`) und sonst „keine Modernisierung". Jeder Zustand mit eigener Illustration + Header-Icon. **Paused-Screen** (`warning`) mit **Resume**- und **Stop**-Button (Resume funktioniert in CLI, s. Resume-Szenario); bei `resumeNeedsAttention` ein „needs your attention"-Hinweis. Alle Texte Englisch (seit 2026-11-11).
-- **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität (strukturierter „now"-Block: Überschrift + Stichpunkte aus `activityHistory[0]`, plus „Show full history"-Popup mit dem gesamten Verlauf), Git-Commits.
+- **Running** — Live-Dashboard: Preflight-Infos, Phasen-Stepper (Custom, mit Gate-Knoten), Finding-Zähler, Live-Timer, aktuelle Aktivität (strukturierter „now"-Block: Überschrift + Stichpunkte aus `activityHistory[0]`, plus „Show full history"-Popup mit dem gesamten Verlauf), Git-Commits und live geänderte Dateien (Liste ab 5 Dateien per „+N more" ausklappbar).
 - **Completed / Stopped** — Zusammenfassung: Phasen-Tabelle mit Gate-Ergebnissen, Statistiken, Links zu Report/Issues (Markdown-Viewer), Reset-Button. Bei `stopped`: Stop-Grund statt Erfolgs-Header, Remaining-Findings hervorgehoben. Beide Status nutzen denselben HTML-Screen (`screen-completed`).
 
 Gebaut mit **UI5 Web Components** (`@ui5/webcomponents`, `-fiori`, `-icons`). Gezielte Imports, kein `Assets.js`. Themes (`sap_horizon`/`sap_horizon_dark`) per `registerThemePropertiesLoader`, umgeschaltet nach Host-Context. Responsive Layout (CSS-Media-Queries, Breakpoints 700px/500px).
@@ -342,6 +342,13 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
+
+### 2026-11-16 — Ausklappbare Datei-Liste + mehr Aktivitäts-Pushes
+
+- **Git-Datei-Liste ausklappbar (`src/mcp-app.ts`, `renderGitActivity`):** Das statische „+N more" ist jetzt ein klickbarer Button, der die volle Liste zeigt bzw. wieder auf die ersten 5 einklappt („show less"). Zustand in `gitFilesExpanded`; `data-sig`-Idempotenz, damit der 0,6-s-Poll den Klick nicht zurücksetzt; Klick-Handler per Delegation am stabilen `#git-activity`-Container (überlebt die `innerHTML`-Neuschreibungen). Im Voll-Zustand ist der Container scrollbar gedeckelt (`.git-activity-expanded`). Rein Frontend — die Daten (`gitActivity.modifiedFiles`) lagen schon vollständig im State.
+- **Mehr & reichere Aktivitäts-Pushes (`SKILL.md`):** Die gestern eingebaute `activityEvent`-Mechanik wird jetzt an echten Phasen-Pushes genutzt (repräsentativ, nicht flächendeckend): Phase-3-Parallel-Batch und Phase-2-manifest listen ihre Sub-Agenten/Regeln als `detail[]`. Lücken geschlossen: Ankündigung vor dem Autofix-/Linter-Lauf und vor dem Phase-4-Regressionscheck; Phase 4 bekam Zwischen-Pushes (vorher zwischen Start und „complete" stumm). Push-Regel geschärft: **lange Operationen (Linter, Test-Gate, Sub-Agent-Batch, Commit) VOR dem Start ankündigen**, nicht erst danach berichten.
+- **Sub-Agent-Fehlverhalten dokumentiert, nicht gefixt:** In einem echten Lauf meldete der `modernize-test-starter`-Sub-Agent „already done", ohne Dateien zu ändern (Modell-Fehlurteil, kein Skill-Bug — Skill verifiziert sauber). Der Haupt-Agent fing es per Linter-Check ab. Härtung ist ein separates Thema.
+- **Tests:** unverändert 21/21 grün (keine Server-/Schema-Änderung). Build + deliver.
 
 ### 2026-11-16 — Reichhaltige Aktivität: `activityEvent` + Verlauf-Popup
 
