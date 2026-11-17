@@ -384,9 +384,9 @@ body {
 .completed-stat.clickable { cursor: pointer; transition: background 0.15s ease, box-shadow 0.15s ease; }
 .completed-stat.clickable:hover { background: var(--sapList_Hover_Background, rgba(0,0,0,0.04)); }
 .completed-stat.clickable:focus-visible { outline: 2px solid var(--sapContent_FocusColor, #0070f2); outline-offset: 1px; }
-/* The highlighted column's values get a crisp amber box inline in applyStatHighlight
-   (box-shadow 0-blur + spread + font-weight). background/outline don't paint on UI5 table
-   cells; a 0-blur box-shadow does — see that function. */
+/* The highlighted column's values get a solid amber fill inline in applyStatHighlight
+   (an inset box-shadow with large spread — background/outline don't paint on UI5 table
+   cells, and an outset box-shadow is clipped at the cell edge). See that function. */
 
 /* ui5-card provides the surface/border/radius for completed sections. */
 .completed-section { display: block; }

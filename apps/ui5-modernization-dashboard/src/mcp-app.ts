@@ -708,28 +708,24 @@ let statHighlightDelegated = false;
 
 function applyStatHighlight() {
   // Flash the matching column by restyling the slotted value spans inline. The UI5 table
-  // defeats `background` and `outline` (span and cell), and an inline !important `color`
-  // loses to a slotted rule on the `.fixed` column. What paints reliably on EVERY column
-  // (verified in-browser) is `box-shadow` + `font-weight`. We use a hard-edged box —
-  // 0 blur, a solid spread, in the theme's amber — so it reads as a crisp boxed outline,
-  // not a soft glow. A stylesheet rule loses here, so set it inline with !important.
-  const BOX = "0 0 0 2px var(--sapCriticalElementColor, #f7bf00)";
+  // defeats `background`/`outline` on slotted content, and clips an OUTSET box-shadow at
+  // the cell edge (overflow:clip, 0 padding). An INSET box-shadow with a large spread fills
+  // the span from the inside — so it reads as a solid fill exactly span-wide, with nothing
+  // extending past the cell to clip. Set inline with !important (stylesheet rules lose here).
+  const FILL = "inset 0 0 0 999px var(--sapCriticalElementColor, #f7bf00)";
   document.querySelectorAll<HTMLElement>("#completed-phases [data-col]").forEach((span) => {
-    const cell = span.closest("ui5-table-cell") as HTMLElement | null;
     if (span.getAttribute("data-col") === highlightedStatCol) {
-      span.style.setProperty("box-shadow", BOX, "important");
+      span.style.setProperty("box-shadow", FILL, "important");
+      span.style.setProperty("color", "#000", "important");
       span.style.setProperty("border-radius", "0.25rem", "important");
       span.style.setProperty("font-weight", "900", "important");
       span.style.setProperty("transition", "box-shadow 0.2s ease", "important");
-      // The cell (and row) use overflow:clip with 0 padding, which would crop the 2px box.
-      // A little cell padding keeps the box inside the cell's own box so it renders in full.
-      if (cell) cell.style.setProperty("padding", "3px 4px", "important");
     } else {
       span.style.removeProperty("box-shadow");
+      span.style.removeProperty("color");
       span.style.removeProperty("border-radius");
       span.style.removeProperty("font-weight");
       span.style.removeProperty("transition");
-      if (cell) cell.style.removeProperty("padding");
     }
   });
 }
