@@ -723,7 +723,7 @@ function applyStatHighlight() {
   document.querySelectorAll<HTMLElement>("#completed-phases [data-col]").forEach((span) => {
     if (span.getAttribute("data-col") === highlightedStatCol) {
       span.style.setProperty("box-shadow", FILL, "important");
-      span.style.setProperty("color", statHighlightPhase === "fading" ? "transparent" : "#fff", "important");
+      span.style.setProperty("color", statHighlightPhase === "fading" ? "transparent" : "var(--sapGroup_ContentBackground, #1d232a)", "important");
       span.style.setProperty("border-radius", "0.25rem", "important");
       span.style.setProperty("font-weight", "900", "important");
       span.style.setProperty("transition", "box-shadow 0.3s ease, color 0.3s ease", "important");
