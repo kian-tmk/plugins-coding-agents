@@ -380,6 +380,14 @@ body {
 .completed-stat-value.warning { color: var(--sapCriticalElementColor, #e9730c); }
 .completed-stat-label { font-size: 0.625rem; color: var(--sapContent_LabelColor); margin-top: 0.25rem; }
 
+/* Clickable stat cards flash the matching phase-summary column (completed-screen gimmick). */
+.completed-stat.clickable { cursor: pointer; transition: background 0.15s ease, box-shadow 0.15s ease; }
+.completed-stat.clickable:hover { background: var(--sapList_Hover_Background, rgba(0,0,0,0.04)); }
+.completed-stat.clickable:focus-visible { outline: 2px solid var(--sapContent_FocusColor, #0070f2); outline-offset: 1px; }
+/* The highlighted column's values are restyled inline in applyStatHighlight (color +
+   font-weight on the slotted span). A stylesheet rule and background/outline don't paint
+   on UI5 table cells, but inline color/weight on the span does — see that function. */
+
 /* ui5-card provides the surface/border/radius for completed sections. */
 .completed-section { display: block; }
 .stop-reason-note { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.625rem 0.75rem; background: var(--sapInformationBackground, #e8f3ff); border: 1px solid var(--sapInformationBorderColor, #a8d4ff); border-radius: var(--sapElement_BorderCornerRadius, 0.5rem); }

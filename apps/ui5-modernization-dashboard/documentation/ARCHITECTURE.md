@@ -343,6 +343,13 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
+### 2026-11-17 — Completed-Screen: Stat-Kachel highlightet die Phasen-Spalte
+
+- **Gimmick:** Klick auf eine Stat-Kachel (findings resolved / files changed / commits) lässt die zugehörige Spalte in der Phasen-Tabelle ~3 s aufleuchten, dann verschwindet es wieder. „findings remaining" (Stopped-Fall) ist nicht klickbar (keine eigene Spalte).
+- **Umsetzung (`src/mcp-app.ts`/`.css`):** Kacheln mit `data-stat` + klickbar/fokussierbar; Zellen-Spans mit `data-col`. Modullokaler `highlightedStatCol` + 3-s-Timer; `flashStatColumn` setzt, `applyStatHighlight` wendet an. Delegierter Klick/Enter/Space-Handler auf `#completed-stats` (einmal gebunden). **`applyStatHighlight()` läuft am Ende von `renderCompleted`** erneut, damit das Highlight den 0,6-s-Poll-Re-Render überlebt (sonst würde es in <1 s weggewischt).
+- **UI5-Table-Styling-Falle (wichtig für künftige Arbeit, in-browser verifiziert):** Die `ui5-table`/`ui5-table-cell`-Zellen defeaten `background` **und** `outline` — auf dem slotted Span *und* auf der Zelle, sogar inline mit `!important`. Ein inline-`!important`-`color` verliert auf der `.fixed`-Spalte zusätzlich gegen eine slotted-Grün-Regel. Zuverlässig auf **allen** Spalten paintet nur ein `text-shadow`-Glow + `font-weight` (inline, farbunabhängig). Deshalb ist das Highlight ein blauer Glow (`--sapHighlightColor`) statt Hintergrund/Rahmen.
+- Rein Frontend — kein Server/Schema. Tests 21/21 grün, in-browser über chrome-devtools verifiziert (Klick → Glow, überlebt Poll, klärt nach 3 s, Spaltenwechsel, Tastatur).
+
 ### 2026-11-16 — CLI-Registrierung: Auto-Mode-Self-Modification-Block + Zustimmungsfluss
 
 - **Befund:** In einem echten Lauf (Server nicht registriert) blockte der Auto-Mode-Klassifikator `claude mcp add -s user` unter **„Self-Modification"** — der Agent ändert seine eigene User-Config, und die Zustimmung des Users („Dashboard im Browser zeigen") hatte die Registrierung nicht konkret benannt. Frühere Läufe blockten nur deshalb nicht, weil der Server schon registriert war (der „already registered"-Zweig ruft `claude mcp add` nie auf); diesmal war er zu Testzwecken entfernt — genau die Erstlauf-Situation eines echten Endnutzers.

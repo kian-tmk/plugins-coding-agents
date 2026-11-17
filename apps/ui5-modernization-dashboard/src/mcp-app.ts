@@ -698,6 +698,45 @@ function renderGateRow(p: PhaseState): string {
     </ui5-table-row>`;
 }
 
+// Completed-screen gimmick: clicking a stat card briefly highlights the matching column
+// in the phase-summary table. The highlight state lives here (not just in the DOM) so it
+// survives renderCompleted's full re-render on every poll tick; applyStatHighlight() is
+// re-run at the end of renderCompleted, and a 3s timer clears it.
+let highlightedStatCol: string | null = null;
+let statHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+let statHighlightDelegated = false;
+
+function applyStatHighlight() {
+  // Flash the matching column by restyling the slotted value spans inline. The UI5 table
+  // defeats background/outline (on span and cell) and even an inline !important `color` on
+  // the `.fixed` span (a slotted color wins). What paints reliably on EVERY column is a
+  // `text-shadow` glow + bold — the glow is color-independent, so it can't be overridden by
+  // the slotted green. Verified in-browser across all three columns.
+  const GLOW = "0 0 8px var(--sapHighlightColor, #4db1ff), 0 0 8px var(--sapHighlightColor, #4db1ff)";
+  document.querySelectorAll<HTMLElement>("#completed-phases [data-col]").forEach((span) => {
+    if (span.getAttribute("data-col") === highlightedStatCol) {
+      span.style.setProperty("text-shadow", GLOW, "important");
+      span.style.setProperty("font-weight", "900", "important");
+      span.style.setProperty("transition", "text-shadow 0.3s ease", "important");
+    } else {
+      span.style.removeProperty("text-shadow");
+      span.style.removeProperty("font-weight");
+      span.style.removeProperty("transition");
+    }
+  });
+}
+
+function flashStatColumn(col: string) {
+  highlightedStatCol = col;
+  applyStatHighlight();
+  if (statHighlightTimer) clearTimeout(statHighlightTimer);
+  statHighlightTimer = setTimeout(() => {
+    highlightedStatCol = null;
+    statHighlightTimer = null;
+    applyStatHighlight();
+  }, 3000);
+}
+
 function renderCompleted(state: ModernizationState) {
   const endTime = state.stoppedAt ?? state.completedAt ?? null;
   const elapsedSec = (state.elapsedSeconds && state.elapsedSeconds > 0)
@@ -728,7 +767,7 @@ function renderCompleted(state: ModernizationState) {
   // Stats
   const statsEl = document.getElementById("completed-stats")!;
   statsEl.innerHTML = `
-    <ui5-card class="completed-stat">
+    <ui5-card class="completed-stat${stopped ? "" : " clickable"}"${stopped ? "" : ` data-stat="fixed" role="button" tabindex="0"`}>
       <div class="completed-stat-inner">
         <ui5-icon name="${stopped ? "quality-issue" : "task"}" class="completed-stat-icon ${stopped && remaining > 0 ? "warning" : stopped ? "" : "positive"}"></ui5-icon>
         <div>
@@ -737,7 +776,7 @@ function renderCompleted(state: ModernizationState) {
         </div>
       </div>
     </ui5-card>
-    ${stopped ? `<ui5-card class="completed-stat">
+    ${stopped ? `<ui5-card class="completed-stat clickable" data-stat="fixed" role="button" tabindex="0">
       <div class="completed-stat-inner">
         <ui5-icon name="accept" class="completed-stat-icon positive"></ui5-icon>
         <div>
@@ -746,7 +785,7 @@ function renderCompleted(state: ModernizationState) {
         </div>
       </div>
     </ui5-card>` : ""}
-    <ui5-card class="completed-stat">
+    <ui5-card class="completed-stat clickable" data-stat="files" role="button" tabindex="0">
       <div class="completed-stat-inner">
         <ui5-icon name="document" class="completed-stat-icon"></ui5-icon>
         <div>
@@ -755,7 +794,7 @@ function renderCompleted(state: ModernizationState) {
         </div>
       </div>
     </ui5-card>
-    <ui5-card class="completed-stat">
+    <ui5-card class="completed-stat clickable" data-stat="commits" role="button" tabindex="0">
       <div class="completed-stat-inner">
         <ui5-icon name="source-code" class="completed-stat-icon"></ui5-icon>
         <div>
@@ -787,9 +826,9 @@ function renderCompleted(state: ModernizationState) {
     const row = `<ui5-table-row>
       <ui5-table-cell>${p.id}</ui5-table-cell>
       <ui5-table-cell>${escapeHtml(p.name)}</ui5-table-cell>
-      <ui5-table-cell>${fixed != null && fixed > 0 ? `<span class="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
-      <ui5-table-cell>${p.filesChanged != null ? `${p.filesChanged} files` : `<span class="muted">—</span>`}</ui5-table-cell>
-      <ui5-table-cell>${p.commit ? `<span class="hash">${escapeHtml(p.commit)}</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${fixed != null && fixed > 0 ? `<span class="fixed" data-col="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${p.filesChanged != null ? `<span data-col="files">${p.filesChanged} files</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
+      <ui5-table-cell>${p.commit ? `<span class="hash" data-col="commits">${escapeHtml(p.commit)}</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${dur}</ui5-table-cell>
     </ui5-table-row>`;
     return row + renderGateRow(p);
@@ -865,6 +904,24 @@ function renderCompleted(state: ModernizationState) {
   // Reset: only offered when the run recorded a dedicated modernization branch.
   // renderResetButton handles the branch-present guard and inline confirmation.
   renderResetButton(state);
+
+  // Stat-card → column highlight. Bind the delegated handler once (survives re-renders),
+  // and re-apply any active highlight so the 0.6s poll re-render doesn't wipe it.
+  const statsForClick = document.getElementById("completed-stats");
+  if (statsForClick && !statHighlightDelegated) {
+    const trigger = (e: Event) => {
+      const card = (e.target as HTMLElement)?.closest<HTMLElement>("[data-stat]");
+      if (!card) return;
+      const col = card.getAttribute("data-stat");
+      if (col) flashStatColumn(col);
+    };
+    statsForClick.addEventListener("click", trigger);
+    statsForClick.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); trigger(e); }
+    });
+    statHighlightDelegated = true;
+  }
+  applyStatHighlight();
 }
 
 // Render the merge section on the completed screen.
