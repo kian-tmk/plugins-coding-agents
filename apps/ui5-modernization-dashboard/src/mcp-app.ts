@@ -703,7 +703,9 @@ function renderGateRow(p: PhaseState): string {
 // survives renderCompleted's full re-render on every poll tick; applyStatHighlight() is
 // re-run at the end of renderCompleted, and a 3s timer clears it.
 let highlightedStatCol: string | null = null;
+let statHighlightPhase: "on" | "fading" = "on";
 let statHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+let statFadeTimer: ReturnType<typeof setTimeout> | null = null;
 let statHighlightDelegated = false;
 
 function applyStatHighlight() {
@@ -712,14 +714,19 @@ function applyStatHighlight() {
   // the cell edge (overflow:clip, 0 padding). An INSET box-shadow with a large spread fills
   // the span from the inside — so it reads as a solid fill exactly span-wide, with nothing
   // extending past the cell to clip. Set inline with !important (stylesheet rules lose here).
-  const FILL = "inset 0 0 0 999px var(--sapCriticalElementColor, #f7bf00)";
+  //
+  // Driven by phase so it re-applies correctly across the 0.6s poll re-render (which swaps
+  // the span elements): "on" = full fill; "fading" = spread collapsed to 0 with a transition,
+  // so a re-render mid-fade still lands on the fading styles instead of jumping.
+  const fillSpread = statHighlightPhase === "fading" ? "0px" : "999px";
+  const FILL = `inset 0 0 0 ${fillSpread} var(--sapCriticalElementColor, #f7bf00)`;
   document.querySelectorAll<HTMLElement>("#completed-phases [data-col]").forEach((span) => {
     if (span.getAttribute("data-col") === highlightedStatCol) {
       span.style.setProperty("box-shadow", FILL, "important");
-      span.style.setProperty("color", "#000", "important");
+      span.style.setProperty("color", statHighlightPhase === "fading" ? "transparent" : "#fff", "important");
       span.style.setProperty("border-radius", "0.25rem", "important");
       span.style.setProperty("font-weight", "900", "important");
-      span.style.setProperty("transition", "box-shadow 0.2s ease", "important");
+      span.style.setProperty("transition", "box-shadow 0.3s ease, color 0.3s ease", "important");
     } else {
       span.style.removeProperty("box-shadow");
       span.style.removeProperty("color");
@@ -732,12 +739,21 @@ function applyStatHighlight() {
 
 function flashStatColumn(col: string) {
   highlightedStatCol = col;
-  applyStatHighlight();
+  statHighlightPhase = "on";
   if (statHighlightTimer) clearTimeout(statHighlightTimer);
+  if (statFadeTimer) clearTimeout(statFadeTimer);
+  applyStatHighlight();
+  // After the hold, start the fade (fill shrinks + text fades via the transition), then
+  // remove the inline styles once the 0.3s transition has visually completed.
   statHighlightTimer = setTimeout(() => {
-    highlightedStatCol = null;
-    statHighlightTimer = null;
+    statHighlightPhase = "fading";
     applyStatHighlight();
+    statFadeTimer = setTimeout(() => {
+      highlightedStatCol = null;
+      statHighlightTimer = null;
+      statFadeTimer = null;
+      applyStatHighlight();
+    }, 300);
   }, 3000);
 }
 
