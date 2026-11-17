@@ -715,16 +715,21 @@ function applyStatHighlight() {
   // not a soft glow. A stylesheet rule loses here, so set it inline with !important.
   const BOX = "0 0 0 2px var(--sapCriticalElementColor, #f7bf00)";
   document.querySelectorAll<HTMLElement>("#completed-phases [data-col]").forEach((span) => {
+    const cell = span.closest("ui5-table-cell") as HTMLElement | null;
     if (span.getAttribute("data-col") === highlightedStatCol) {
       span.style.setProperty("box-shadow", BOX, "important");
       span.style.setProperty("border-radius", "0.25rem", "important");
       span.style.setProperty("font-weight", "900", "important");
       span.style.setProperty("transition", "box-shadow 0.2s ease", "important");
+      // The cell (and row) use overflow:clip with 0 padding, which would crop the 2px box.
+      // A little cell padding keeps the box inside the cell's own box so it renders in full.
+      if (cell) cell.style.setProperty("padding", "3px 4px", "important");
     } else {
       span.style.removeProperty("box-shadow");
       span.style.removeProperty("border-radius");
       span.style.removeProperty("font-weight");
       span.style.removeProperty("transition");
+      if (cell) cell.style.removeProperty("padding");
     }
   });
 }
