@@ -708,18 +708,21 @@ let statHighlightDelegated = false;
 
 function applyStatHighlight() {
   // Flash the matching column by restyling the slotted value spans inline. The UI5 table
-  // defeats background/outline (on span and cell) and even an inline !important `color` on
-  // the `.fixed` span (a slotted color wins). What paints reliably on EVERY column is a
-  // `text-shadow` glow + bold — the glow is color-independent, so it can't be overridden by
-  // the slotted green. Verified in-browser across all three columns.
-  const GLOW = "0 0 8px var(--sapHighlightColor, #4db1ff), 0 0 8px var(--sapHighlightColor, #4db1ff)";
+  // defeats `background` and `outline` (span and cell), and an inline !important `color`
+  // loses to a slotted rule on the `.fixed` column. What paints reliably on EVERY column
+  // (verified in-browser) is `box-shadow` + `font-weight`. We use a hard-edged box —
+  // 0 blur, a solid spread, in the theme's amber — so it reads as a crisp boxed outline,
+  // not a soft glow. A stylesheet rule loses here, so set it inline with !important.
+  const BOX = "0 0 0 2px var(--sapCriticalElementColor, #f7bf00)";
   document.querySelectorAll<HTMLElement>("#completed-phases [data-col]").forEach((span) => {
     if (span.getAttribute("data-col") === highlightedStatCol) {
-      span.style.setProperty("text-shadow", GLOW, "important");
+      span.style.setProperty("box-shadow", BOX, "important");
+      span.style.setProperty("border-radius", "0.25rem", "important");
       span.style.setProperty("font-weight", "900", "important");
-      span.style.setProperty("transition", "text-shadow 0.3s ease", "important");
+      span.style.setProperty("transition", "box-shadow 0.2s ease", "important");
     } else {
-      span.style.removeProperty("text-shadow");
+      span.style.removeProperty("box-shadow");
+      span.style.removeProperty("border-radius");
       span.style.removeProperty("font-weight");
       span.style.removeProperty("transition");
     }
