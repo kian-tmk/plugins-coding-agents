@@ -441,16 +441,17 @@ body {
 .ps-expandable { cursor: pointer; }
 .ps-expandable:hover { background: var(--sapList_Hover_Background, rgba(255,255,255,0.04)); }
 .ps-expandable:focus-visible { outline: 2px solid var(--sapContent_FocusColor, #0070f2); outline-offset: -2px; }
-.ps-chevron { display: inline-block; color: var(--sapContent_LabelColor); font-size: 0.7rem; transition: transform 0.15s ease; }
+.ps-chevron { display: inline-block; margin-left: -2px; color: var(--sapContent_LabelColor); font-size: 0.7rem; transition: transform 0.15s ease; }
 .ps-chevron-open { transform: rotate(90deg); }
 .ps-more { font-size: var(--sapFontSmallSize); color: var(--sapLinkColor); margin-left: 0.25rem; }
 
-/* Panel row: content cell spans Phase..Files (like the gate row); spacers hidden. */
-.ps-panel-row ui5-table-cell.ps-panel { grid-column: 2 / 5; }
+/* Panel row: content cell spans Phase..Duration (uses the full table width beyond col 1);
+   spacers hidden. No background box — content left-aligns with the phase name (cell left),
+   so the inner left padding is 0; vertical/right padding keeps it from the edges. */
+.ps-panel-row ui5-table-cell.ps-panel { grid-column: 2 / 7; }
 .ps-panel-row ui5-table-cell.ps-gate-spacer { display: none; }
 .ps-panel-inner {
-  margin: 0.25rem 0 0.5rem; padding: 0.625rem 0.75rem;
-  background: var(--sapBackgroundColor, rgba(0,0,0,0.15)); border-radius: 0.375rem;
+  margin: 0.125rem 0 0.5rem; padding: 0.25rem 0.75rem 0.25rem 0;
   font-size: var(--sapFontSmallSize); color: var(--sapTextColor); line-height: 1.5;
 }
 .ps-panel-inner .ps-panel-key { color: var(--sapContent_LabelColor); font-weight: 600; margin-right: 0.25rem; }
