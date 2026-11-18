@@ -343,6 +343,14 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 > Neueste zuerst. Ein Eintrag pro nennenswerter Änderung. Format: `### JJJJ-MM-TT — Titel`,
 > darunter kurze Stichpunkte. Bei Code-Änderungen gern den Commit-Hash nennen.
 
+### 2026-11-18 — Completed-Screen: ausklappbare Phasen- & Gate-Zeilen (Detail-Panel)
+
+- **Phasen-Zeilen** (abgeschlossen) sind klickbar und klappen ein Detail-Panel auf — Chevron-Indikator, `role=button`/`tabindex`/`aria-expanded`. Inhalt **rein aus dem State** (kein .md-Parsing): prosanahe Zusammenfassung (`N findings resolved (before → after) across M files in <dur>`), eingesetzte `skills[]`, Commit + Message, und die zu dieser Phase gehörenden `activityHistory`-Einträge (mit `detail[]`-Unterpunkten) als „Activity"-Liste — kommt dem früheren .md-Prosatext nahe, ohne den brüchigen Umweg über die Doku-Datei (das Template garantiert diese Prosa ohnehin nicht).
+- **Gate-Zeilen bleiben strukturell unverändert** (Icon, Label, Dauer in der Zeile); nur die frühere inline-`→ gateNote` wandert ins Panel. Eine Gate-Zeile **mit** Note zeigt ein „more…/less"-Label + Chevron und ist ausklappbar; ein problemfreies Gate (keine Note) bleibt schlicht und nicht ausklappbar.
+- **Zuordnung activityHistory ↔ Phase:** primär per Text-Präfix `^Phase N`, Fallback über das Zeitfenster der „Phase N … starting"-Einträge. Läufe ohne `activityHistory` (vor dem Feed-Feature) zeigen nur die generierte Zusammenfassung.
+- **Poll-robust:** offene Panels leben in einem modullokalen `expandedRows`-Set (`phase:<id>`/`gate:<id>`); `renderCompleted` baut die Tabelle bei jedem 0,6-s-Poll neu, stellt die offenen Panels aber aus dem Set wieder her. Ein delegierter Klick/Enter/Space-Handler auf `#completed-phases` (einmal gebunden) togglet und rendert neu. Verträgt sich mit dem Stat-Highlight (Idee 3), das danach läuft.
+- Rein Frontend — kein Server/Schema/Skill. Tests 21/21 grün; in-browser über chrome-devtools verifiziert (Phasen-Panel, Gate-Note + „more…", mehrere offen, Poll-Überleben, Tastatur).
+
 ### 2026-11-17 — Completed-Screen: Stat-Kachel highlightet die Phasen-Spalte
 
 - **Gimmick:** Klick auf eine Stat-Kachel (findings resolved / files changed / commits) lässt die zugehörige Spalte in der Phasen-Tabelle ~3 s aufleuchten, dann verschwindet es wieder. „findings remaining" (Stopped-Fall) ist nicht klickbar (keine eigene Spalte).

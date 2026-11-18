@@ -681,22 +681,81 @@ function renderGateRow(p: PhaseState): string {
   }
 
   const dur = p.gateDurationSeconds != null ? formatElapsed(p.gateDurationSeconds) : "";
-  const note = p.gateNote
-    ? `<div class="ps-gate-note">→ ${escapeHtml(p.gateNote)}</div>`
+  // The gate note no longer sits inline — it moves into an expandable panel. When a note
+  // exists, the gate row becomes expandable and shows a "more…" affordance; a problem-free
+  // gate (no note) stays plain and non-expandable.
+  const hasNote = !!(p.gateNote && p.gateNote.trim());
+  const open = expandedRows.has(`gate:${p.id}`);
+  const more = hasNote
+    ? ` <span class="ps-more">${open ? "less" : "more…"}</span><span class="ps-chevron${open ? " ps-chevron-open" : ""}" aria-hidden="true">▸</span>`
     : "";
-  // Gate detail as its own table row. The label cell (Phase column) spans across
-  // Phase..Files so the label + note aren't cramped; the two covered cells are
-  // marked as spacers (hidden via CSS). The gate duration sits in the Duration
-  // column (last), with an empty Commit cell before it.
-  return `<ui5-table-row class="ps-gate-row ${cls}">
+  const rowAttrs = hasNote
+    ? ` ps-expandable" data-expand="gate:${p.id}" role="button" tabindex="0" aria-expanded="${open}`
+    : "";
+  const gateRow = `<ui5-table-row class="ps-gate-row ${cls}${rowAttrs}">
       <ui5-table-cell></ui5-table-cell>
-      <ui5-table-cell class="ps-gate-cell"><span class="ps-gate-label">${label} <ui5-icon name="${icon}" class="ps-gate-icon"></ui5-icon></span>${note}</ui5-table-cell>
+      <ui5-table-cell class="ps-gate-cell"><span class="ps-gate-label">${label} <ui5-icon name="${icon}" class="ps-gate-icon"></ui5-icon></span>${more}</ui5-table-cell>
       <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
       <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
       <ui5-table-cell></ui5-table-cell>
       <ui5-table-cell><span class="ps-gate-dur">${dur}</span></ui5-table-cell>
     </ui5-table-row>`;
+  const gatePanel = (hasNote && open)
+    ? panelRow(`<div class="ps-panel-note">${escapeHtml(p.gateNote as string)}</div>`)
+    : "";
+  return gateRow + gatePanel;
 }
+
+// A full-width panel row under a phase/gate row: one content cell + spacer cells so the
+// content can breathe across the table width (same shape as the gate row).
+function panelRow(innerHtml: string): string {
+  return `<ui5-table-row class="ps-panel-row">
+      <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell class="ps-panel"><div class="ps-panel-inner">${innerHtml}</div></ui5-table-cell>
+      <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
+      <ui5-table-cell class="ps-gate-spacer"></ui5-table-cell>
+      <ui5-table-cell></ui5-table-cell>
+      <ui5-table-cell></ui5-table-cell>
+    </ui5-table-row>`;
+}
+
+// Build the expandable detail panel for a finished phase, entirely from state (no .md).
+function buildPhasePanel(p: PhaseState, history: ModernizationState["activityHistory"]): string {
+  const parts: string[] = [];
+  if (p.description) parts.push(`<div class="ps-panel-desc">${escapeHtml(p.description)}</div>`);
+
+  // Prose-ish summary from the numeric fields (only the parts that exist).
+  const bits: string[] = [];
+  if (p.findingsBefore != null && p.findingsAfter != null) {
+    const resolved = p.findingsBefore - p.findingsAfter;
+    bits.push(`${resolved} finding${resolved !== 1 ? "s" : ""} resolved (${p.findingsBefore} → ${p.findingsAfter})`);
+  }
+  if (p.filesChanged != null) bits.push(`across ${p.filesChanged} file${p.filesChanged !== 1 ? "s" : ""}`);
+  if (p.durationSeconds != null) bits.push(`in ${formatElapsed(p.durationSeconds)}`);
+  if (bits.length) parts.push(`<div class="ps-panel-summary">${escapeHtml(bits.join(" "))}.</div>`);
+
+  if (Array.isArray(p.skills) && p.skills.length) {
+    parts.push(`<div class="ps-panel-skills"><span class="ps-panel-key">Applied:</span> ${p.skills.map(s => `<code>${escapeHtml(s)}</code>`).join(" ")}</div>`);
+  }
+  if (p.commit) {
+    parts.push(`<div class="ps-panel-commit"><span class="ps-panel-key">Commit:</span> <span class="hash">${escapeHtml(p.commit)}</span>${p.commitMessage ? ` — ${escapeHtml(p.commitMessage)}` : ""}</div>`);
+  }
+
+  // Activity for this phase (from activityHistory), oldest first, with detail bullets.
+  const acts = activityForPhase(history, p.id);
+  if (acts.length) {
+    const items = acts.map((e) => {
+      const detail = Array.isArray(e.detail) && e.detail.length
+        ? `<ul class="ps-panel-detail">${e.detail.map(d => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`
+        : "";
+      return `<li>${escapeHtml(e.text)}${detail}</li>`;
+    }).join("");
+    parts.push(`<div class="ps-panel-activity"><span class="ps-panel-key">Activity:</span><ul>${items}</ul></div>`);
+  }
+
+  return panelRow(parts.join(""));
+}
+
 
 // Completed-screen gimmick: clicking a stat card briefly highlights the matching column
 // in the phase-summary table. The highlight state lives here (not just in the DOM) so it
@@ -757,7 +816,32 @@ function flashStatColumn(col: string) {
   }, 3000);
 }
 
+// Expandable phase/gate rows on the completed screen. Keys: "phase:<id>" / "gate:<id>".
+// The Set lives outside the DOM so open panels survive renderCompleted's full rebuild on
+// every poll tick (same reapply idea as the stat highlight). Delegated handler bound once.
+const expandedRows = new Set<string>();
+let phaseExpandDelegated = false;
+let lastCompletedState: ModernizationState | null = null;
+
+// Map activityHistory entries to a phase. Primary: the entry text starts with "Phase <N>".
+// Fallback: the time window between this phase's first "starting" entry and the next phase's.
+// Returns entries oldest-first (natural reading order within the phase).
+function activityForPhase(history: ModernizationState["activityHistory"], phaseId: number): Array<{ ts: string; text: string; detail?: string[] }> {
+  const list = Array.isArray(history) ? history : [];
+  const prefix = new RegExp(`^Phase\\s+${phaseId}\\b`);
+  const matched = list.filter((e) => prefix.test(e.text || ""));
+  if (matched.length > 0) return matched.slice().reverse();
+  // Fallback: window by "Phase N … starting" timestamps.
+  const startOf = (n: number) => list.find((e) => new RegExp(`^Phase\\s+${n}\\b`).test(e.text || "") && /start/i.test(e.text || ""))?.ts;
+  const thisStart = startOf(phaseId);
+  const nextStart = startOf(phaseId + 1);
+  if (!thisStart) return [];
+  const inWindow = list.filter((e) => e.ts >= thisStart && (!nextStart || e.ts < nextStart));
+  return inWindow.slice().reverse();
+}
+
 function renderCompleted(state: ModernizationState) {
+  lastCompletedState = state;
   const endTime = state.stoppedAt ?? state.completedAt ?? null;
   const elapsedSec = (state.elapsedSeconds && state.elapsedSeconds > 0)
     ? state.elapsedSeconds
@@ -843,15 +927,22 @@ function renderCompleted(state: ModernizationState) {
       ? p.findingsBefore - effectiveAfter
       : null;
     const dur = p.durationSeconds != null ? formatElapsed(p.durationSeconds) : "—";
-    const row = `<ui5-table-row>
+    // A finished phase is expandable (there is always commit/findings/skills to show).
+    const expandable = p.status === "completed" || p.status === "failed";
+    const open = expandedRows.has(`phase:${p.id}`);
+    const chevron = expandable
+      ? `<span class="ps-chevron${open ? " ps-chevron-open" : ""}" aria-hidden="true">▸</span> `
+      : "";
+    const row = `<ui5-table-row class="${expandable ? "ps-expandable" : ""}"${expandable ? ` data-expand="phase:${p.id}" role="button" tabindex="0" aria-expanded="${open}"` : ""}>
       <ui5-table-cell>${p.id}</ui5-table-cell>
-      <ui5-table-cell>${escapeHtml(p.name)}</ui5-table-cell>
+      <ui5-table-cell>${chevron}${escapeHtml(p.name)}</ui5-table-cell>
       <ui5-table-cell>${fixed != null && fixed > 0 ? `<span class="fixed" data-col="fixed">${fixed} fixed</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${p.filesChanged != null ? `<span data-col="files">${p.filesChanged} files</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${p.commit ? `<span class="hash" data-col="commits">${escapeHtml(p.commit)}</span>` : `<span class="muted">—</span>`}</ui5-table-cell>
       <ui5-table-cell>${dur}</ui5-table-cell>
     </ui5-table-row>`;
-    return row + renderGateRow(p);
+    const phasePanel = (expandable && open) ? buildPhasePanel(p, state.activityHistory) : "";
+    return row + phasePanel + renderGateRow(p);
   }).join("");
   phasesEl.insertAdjacentHTML("beforeend", rowsHtml);
 
@@ -941,6 +1032,25 @@ function renderCompleted(state: ModernizationState) {
     });
     statHighlightDelegated = true;
   }
+
+  // Expand/collapse phase & gate rows. One delegated handler on the table (bound once);
+  // the open set drives the row rebuild, so open panels survive the 0.6s poll re-render.
+  const phasesForExpand = document.getElementById("completed-phases");
+  if (phasesForExpand && !phaseExpandDelegated) {
+    const toggle = (e: Event) => {
+      const rowEl = (e.target as HTMLElement)?.closest<HTMLElement>("[data-expand]");
+      if (!rowEl) return;
+      const key = rowEl.getAttribute("data-expand")!;
+      if (expandedRows.has(key)) expandedRows.delete(key); else expandedRows.add(key);
+      renderCompleted(lastCompletedState ?? state);
+    };
+    phasesForExpand.addEventListener("click", toggle);
+    phasesForExpand.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); }
+    });
+    phaseExpandDelegated = true;
+  }
+
   applyStatHighlight();
 }
 
