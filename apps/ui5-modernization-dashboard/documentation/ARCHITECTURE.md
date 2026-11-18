@@ -349,7 +349,8 @@ Der `modernize-ui5-app`-Skill (`SKILL.md`) orchestriert den gesamten Ablauf:
 - **Gate-Zeilen bleiben strukturell unverändert** (Icon, Label, Dauer in der Zeile); nur die frühere inline-`→ gateNote` wandert ins Panel. Eine Gate-Zeile **mit** Note zeigt ein „more…/less"-Label + Chevron und ist ausklappbar; ein problemfreies Gate (keine Note) bleibt schlicht und nicht ausklappbar.
 - **Zuordnung activityHistory ↔ Phase:** primär per Text-Präfix `^Phase N`, Fallback über das Zeitfenster der „Phase N … starting"-Einträge. Läufe ohne `activityHistory` (vor dem Feed-Feature) zeigen nur die generierte Zusammenfassung.
 - **Poll-robust:** offene Panels leben in einem modullokalen `expandedRows`-Set (`phase:<id>`/`gate:<id>`); `renderCompleted` baut die Tabelle bei jedem 0,6-s-Poll neu, stellt die offenen Panels aber aus dem Set wieder her. Ein delegierter Klick/Enter/Space-Handler auf `#completed-phases` (einmal gebunden) togglet und rendert neu. Verträgt sich mit dem Stat-Highlight (Idee 3), das danach läuft.
-- Rein Frontend — kein Server/Schema/Skill. Tests 21/21 grün; in-browser über chrome-devtools verifiziert (Phasen-Panel, Gate-Note + „more…", mehrere offen, Poll-Überleben, Tastatur).
+- **Panel-Optik:** kein Hintergrund-Kasten — der Inhalt sitzt direkt auf der Card und ist links bündig mit der Phasenbezeichnung (inneres Links-Padding 0; die Panel-Zelle beginnt ohnehin an der Phasen-Spalte). Das Panel nutzt die Tabellenbreite (`grid-column: 2 / 7`, bis zur Duration-Spalte); Chevron minimal nach links gerückt.
+- Rein Frontend — kein Server/Schema/Skill. Tests 21/21 grün; in-browser über chrome-devtools verifiziert (Phasen-Panel, Gate-Note + „more…", mehrere offen, Poll-Überleben, Tastatur, Ausrichtung/Breite).
 
 ### 2026-11-17 — Completed-Screen: Stat-Kachel highlightet die Phasen-Spalte
 
